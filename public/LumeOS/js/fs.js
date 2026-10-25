@@ -5,7 +5,8 @@
    ============================================================ */
 
 const LumeFS = (function () {
-  const KEY = 'lume.fs.v1';
+  /* v2：把 lume.lang 改名成 hello.lume（.lume 是这门语言真正的后缀） */
+  const KEY = 'lume.fs.v2';
 
   const SEED = {
     '/': { type: 'dir' },
@@ -38,7 +39,8 @@ to feel like a real machine for about thirty seconds.
 2. Press Cmd+K or Ctrl+K and type "term".
 3. Open Terminal and run \`neofetch\`.
 4. Toggle the theme from the menu bar.
-5. Right-click the desktop.
+5. Open work/hello.lume — .lume files get syntax colour in the editor.
+6. Right-click the desktop.
 `
     },
 
@@ -59,17 +61,60 @@ and nobody will ever notice it. that is the job.
 `
     },
 
-    '/home/lume/work/lume.lang': {
+    '/home/lume/work/hello.lume': {
       type: 'file',
-      content: `// lume — a tiny language for tiny machines
+      content: `// hello.lume — 这台机器就是以它命名的
+// 语法全部取自 LANGUAGE/lume 的真实用例，不是编的
 
-fn greet(name: str) -> str {
-  return "hello, \${name}"
+// 纯函数：编译器会证明出 const，打出 __attribute__((const))
+fn sq(x: int) -> int {
+    return x * x
+}
+
+fn even(x: int) -> bool {
+    return x % 2 == 0
+}
+
+// 管道融合：三段 |> 被编成单个 for 循环，中间数组不上堆
+fn squares() -> [int] {
+    xs := [1, 2, 3, 4, 5]
+    return xs |> map(sq) |> filter(even)
+}
+
+// 结构体 + 方法（字段直接裸写，不用 self.x）
+struct Point {
+    x: float
+    y: float
+
+    fn len2() -> float {
+        return x * x + y * y
+    }
+}
+
+// 枚举：C 风格无载荷，显式值之后自动 +1
+enum Mode {
+    Fast = 0
+    Safe = 10
+    Cold
+}
+
+// 装饰器 + 并行归约
+@fastmath
+fn total(xs: [int], n: int) -> int {
+    acc: int = 0
+    par for i in 0..n {
+        acc += xs[i]
+    }
+    return acc
 }
 
 fn main() {
-  let who = "world"
-  print(greet(who))
+    name := "lume"
+
+    // 插值里能放表达式，也能再嵌一层字符串
+    say("hello, {name} — {squares().len()} evens")
+    say("mode = {Mode.Safe}  hex = {0x1f4}  rune = {'a'}")
+    say("verdict: {1 < 2 and not false}")
 }
 `
     },

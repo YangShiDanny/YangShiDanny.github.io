@@ -440,16 +440,33 @@ const EditorApp = {
       <div class="editor">
         <div class="editor-bar">
           <span class="file">untitled</span>
+          <span class="lang" hidden>lume</span>
           <span class="spacer"></span>
           <span class="words">0 words</span>
           <button class="editor-btn primary" type="button" data-act="save">Save</button>
         </div>
-        <textarea class="editor-area" spellcheck="false" aria-label="Editor"></textarea>
+        <div class="editor-wrap">
+          <pre class="editor-code" aria-hidden="true" hidden><code></code></pre>
+          <textarea class="editor-area" spellcheck="false" wrap="off" aria-label="Editor"></textarea>
+        </div>
       </div>`;
 
     const area = body.querySelector('.editor-area');
+    const codeBox = body.querySelector('.editor-code');
+    const codeEl = codeBox.querySelector('code');
+    const langTag = body.querySelector('.editor-bar .lang');
     const fileLabel = body.querySelector('.editor-bar .file');
     const words = body.querySelector('.editor-bar .words');
+
+    /* .lume 文件走语法高亮：文字画在下面的 <pre> 里，textarea 只负责输入和光标 */
+    const syntax = !!(path && window.LumeHighlight && LumeHighlight.isLume(path));
+
+    const paint = () => {
+      if (!syntax) return;
+      codeEl.innerHTML = LumeHighlight.render(area.value);
+      codeBox.scrollTop = area.scrollTop;
+      codeBox.scrollLeft = area.scrollLeft;
+    };
 
     const sync = () => {
       const text = area.value;
@@ -466,6 +483,10 @@ const EditorApp = {
         '# a blank page\n\nNothing here is permanent — press Save and it goes into the fake filesystem.\nOpen Files and it will be there.\n';
     }
 
+    codeBox.hidden = !syntax;
+    langTag.hidden = !syntax;
+    area.classList.toggle('is-code', syntax);
+
     const save = () => {
       if (!path) {
         window.LumeOS.toast('Untitled buffers are not saved — open a file from Files first.');
@@ -480,6 +501,13 @@ const EditorApp = {
     area.addEventListener('input', () => {
       dirty = true;
       sync();
+      paint();
+    });
+
+    area.addEventListener('scroll', () => {
+      if (!syntax) return;
+      codeBox.scrollTop = area.scrollTop;
+      codeBox.scrollLeft = area.scrollLeft;
     });
 
     area.addEventListener('keydown', (e) => {
@@ -492,12 +520,16 @@ const EditorApp = {
         const start = area.selectionStart;
         area.value = area.value.slice(0, start) + '  ' + area.value.slice(area.selectionEnd);
         area.selectionStart = area.selectionEnd = start + 2;
+        dirty = true;
+        sync();
+        paint();
       }
     });
 
     body.querySelector('[data-act="save"]').addEventListener('click', save);
 
     sync();
+    paint();
     setTimeout(() => area.focus(), 60);
   }
 };
