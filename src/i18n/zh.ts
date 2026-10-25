@@ -35,7 +35,7 @@ export default {
       { name: "VSCode", icon: "vscode" },
       { name: "Git", icon: "git" },
       { name: "Astro", icon: "astro" },
-      { name: "AstraEditor", img: "https://editors.astras.top/images/logo-white.svg" }
+      { name: "AstraEditor", img: "/icons/astraeditor.svg" }
     ],
     visitors: "访客"
   },
@@ -76,7 +76,7 @@ export default {
         { name: "Git", icon: "git" },
         { name: "VSCode", icon: "vscode" },
         { name: "IDEA", icon: "idea" },
-        { name: "AstraEditor", img: "https://editors.astras.top/images/logo-white.svg" }
+        { name: "AstraEditor", img: "/icons/astraeditor.svg" }
       ]}
     ]
   }

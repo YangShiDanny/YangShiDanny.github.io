@@ -4,12 +4,27 @@
    ============================================================ */
 
 /* ---------- 字体 ---------- */
+/* 两个字体都已用 pyftsubset 裁到 latin ASCII 子集（只保留实际用到的字符），
+   并从 47KB/21KB 分别降到 23KB/8KB，同时去掉了对 Google Fonts 的第三方依赖。
+
+   重新生成命令（需要 fonttools + brotli）：
+   pyftsubset in.woff2 --output-file=out.woff2 --flavor=woff2 \
+     --unicodes="U+0020-007E,U+00A0,U+00B7,U+00D7,U+2013,U+2014,U+2018-201D,U+2022,U+2026,U+2713" \
+     --layout-features='kern,liga' --no-hinting
+   注意：U+2192（→）故意没保留，站点没用到；若以后要用请加回去。 */
 @font-face {
   font-family: 'Cal Sans';
   font-style: normal;
   font-weight: 400 700;
   font-display: swap;
-  src: url('/fonts/cal-sans-latin-400.woff2') format('woff2');
+  src: url('/fonts/cal-sans-subset.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900; /* 可变字体，一个文件覆盖全部字重 */
+  font-display: swap;
+  src: url('/fonts/inter-latin-var.woff2') format('woff2');
 }
 
 /* ---------- CSS 变量：暗色（默认） ---------- */

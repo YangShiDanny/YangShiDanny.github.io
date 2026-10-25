@@ -62,7 +62,7 @@ if (!hadBirthdayThisYear) age--;
                       {item.img ? (
                         <span class="arsenal-logo" style={`--logo:url(${item.img})`} role="img" aria-label={item.name}></span>
                       ) : (
-                        <img class="arsenal-icon" src={`https://skillicons.dev/icons?i=${item.icon}`} alt={item.name} width="28" height="28" loading="lazy" />
+                        <img class="arsenal-icon" src={`/icons/${item.icon}.svg`} alt={item.name} width="28" height="28" loading="lazy" />
                       )}
                     </div>
                     <span class="arsenal-tip">{item.name}</span>
