@@ -1,0 +1,75 @@
+---
+import translations from '../i18n';
+import type { Locale } from '../i18n';
+
+const locale = Astro.currentLocale as Locale;
+const t = translations[locale];
+const nextHref = locale === 'en' ? '/zh/' : '/';
+const path = Astro.url.pathname;
+const { is404 = false } = Astro.props;
+---
+
+<header class="topnav">
+  <div class="topnav-pill">
+    <a href={locale === 'en' ? '/' : '/zh/'} class="topnav-brand">{t.siteTitle}</a>
+    {is404 && <span class="topnav-404">404</span>}
+
+    <nav class="topnav-links">
+      <a
+        href={locale === 'en' ? '/' : '/zh/'}
+        class:list={['topnav-link', { active: path === '/' || path === '/zh/' }]}
+      >{t.nav.home}</a>
+
+      <a
+        href={locale === 'en' ? '/projects' : '/zh/projects'}
+        class:list={['topnav-link', { active: path === '/projects' || path === '/zh/projects' }]}
+      >{t.nav.projects}</a>
+
+      <a
+        href={locale === 'en' ? '/about' : '/zh/about'}
+        class:list={['topnav-link', { active: path === '/about' || path === '/zh/about' }]}
+      >{t.nav.about}</a>
+    </nav>
+
+    <div class="topnav-divider" aria-hidden="true"></div>
+
+    <a href={nextHref} class="topnav-link topnav-lang">
+      {locale === 'en' ? t.ui.switchZh : t.ui.switchEn}
+    </a>
+
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>
+    </button>
+  </div>
+</header>
+
+<script>
+  const SUN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>';
+  const MOON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
+
+  const toggle = document.getElementById('theme-toggle') as HTMLButtonElement | null;
+  const langLink = document.querySelector('.topnav-lang') as HTMLAnchorElement | null;
+
+  function syncIcon() {
+    if (!toggle) return;
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    toggle.innerHTML = isLight ? MOON : SUN;
+  }
+  syncIcon();
+
+  toggle?.addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('site-theme', next); } catch (e) {}
+    syncIcon();
+    window.dispatchEvent(new Event('themechange'));
+  });
+
+  langLink?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const targetLang = langLink.href.includes('/zh') ? 'zh' : 'en';
+    localStorage.setItem('site-lang', targetLang);
+    location.href = langLink.href;
+  });
+</script>

@@ -1,0 +1,98 @@
+---
+import BaseLayout from '../components/BaseLayout.astro';
+import translations from '../i18n';
+import type { Locale } from '../i18n';
+
+const isZh = Astro.url.pathname.startsWith('/zh');
+const locale = (isZh ? 'zh' : 'en') as Locale;
+const t = translations[locale];
+
+const links = {
+  home: isZh ? '/zh/' : '/',
+  projects: isZh ? '/zh/projects' : '/projects',
+  about: isZh ? '/zh/about' : '/about',
+};
+
+const copy = {
+  en: {
+    eyebrow: 'Error',
+    title: '404',
+    desc: "This page drifted off into the void. Let's get you back to solid ground.",
+    home: 'Home',
+    projects: 'Projects',
+    about: 'About',
+  },
+  zh: {
+    eyebrow: '出错了',
+    title: '404',
+    desc: '这个页面飘进了虚空里。带您回到正轨吧。',
+    home: '首页',
+    projects: '项目',
+    about: '关于',
+  },
+};
+
+const c = copy[locale];
+---
+
+<BaseLayout title={`404 | ${t.siteTitle}`} is404={true}>
+  <section class="section notfound">
+    <div class="container notfound-inner">
+      <p class="eyebrow">{c.eyebrow}</p>
+      <h1 class="display notfound-code">{c.title}</h1>
+      <p class="muted notfound-desc">{c.desc}</p>
+
+      <div class="notfound-links">
+        <a href={links.home} class="btn btn-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-star" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg>
+          <span>{c.home}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-arrow" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+        </a>
+        <a href={links.projects} class="btn btn-outline">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-star" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg>
+          <span>{c.projects}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-arrow" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+        </a>
+        <a href={links.about} class="btn btn-outline">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-star" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg>
+          <span>{c.about}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-arrow" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <style>
+    .notfound {
+      min-height: calc(100vh - 64px);
+      display: flex;
+      align-items: center;
+    }
+    .notfound-inner {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .notfound .eyebrow {
+      margin-bottom: 16px;
+    }
+    .notfound-code {
+      font-size: clamp(5rem, 22vw, 12rem);
+      line-height: 0.9;
+      margin: 0;
+      letter-spacing: -0.04em;
+    }
+    .notfound-desc {
+      max-width: 32rem;
+      margin: 20px 0 40px;
+      font-size: 1.05rem;
+    }
+    .notfound-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+    }
+  </style>
+</BaseLayout>

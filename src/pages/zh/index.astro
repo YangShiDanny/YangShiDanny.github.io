@@ -1,0 +1,170 @@
+---
+import BaseLayout from '../../components/BaseLayout.astro';
+import translations from '../../i18n';
+import type { Locale } from '../../i18n';
+
+const locale = Astro.currentLocale as Locale;
+const t = translations[locale];
+---
+
+<BaseLayout title={t.siteTitle}>
+  <!-- Hero -->
+  <section class="section">
+    <div class="container">
+      <p class="eyebrow">{t.home.role}</p>
+      <h1 class="display" style="font-size: clamp(2.75rem, 7vw, 5rem);">{t.home.greeting}</h1>
+      <p class="muted" style="max-width: 32rem; font-size: 1.125rem; margin: 24px 0 32px;">
+        {t.home.bio}
+      </p>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <a href={locale === 'en' ? '/projects' : '/zh/projects'} class="btn btn-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-star" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg>
+          <span>{t.home.viewProjects}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-arrow" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+        </a>
+        <a href={locale === 'en' ? '/about' : '/zh/about'} class="btn btn-outline">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-star" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg>
+          <span>{t.home.aboutMe}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-arrow" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- 统计数字 -->
+  <section class="section">
+    <div class="container">
+      <div class="stats-grid">
+        {t.home.stats.map((s) => (
+          <div class="stat">
+            <div class="stat-value">{s.value}</div>
+            <div class="stat-label">{s.label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- 技能 + 工具箱 -->
+  <section class="section">
+    <div class="container">
+      <p class="eyebrow">Technical</p>
+      <h2 class="display" style="font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 40px;">
+        {t.home.skillsHeading}
+      </h2>
+
+      <div class="skill-grid">
+        {t.home.skills.map((s) => (
+          <div class="skill">
+            <div class="skill-head">
+              <span>{s.name}</span>
+              <span class="skill-pct">{s.level}%</span>
+            </div>
+            <div class="skill-bar">
+              <div class="skill-fill" style={`width:${s.level}%`}></div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <h3 class="subheading">{t.home.arsenalHeading}</h3>
+      <div class="arsenal">
+        {t.home.arsenal.map((item) => (
+          <div class="arsenal-item">
+            <div class="arsenal-tile">
+              {item.img ? (
+                <span class="arsenal-logo" style={`--logo:url(${item.img})`} role="img" aria-label={item.name}></span>
+              ) : item.icon ? (
+                <img class="arsenal-icon" src={`https://skillicons.dev/icons?i=${item.icon}`} alt={item.name} width="28" height="28" loading="lazy" />
+              ) : (
+                <span class="arsenal-text">{item.name}</span>
+              )}
+            </div>
+            <span class="arsenal-tip">{item.name}</span>
+          </div>
+        ))}
+      </div>
+
+      <!-- 访客统计暂时隐藏
+      <div class="visitor">
+        <p class="eyebrow">{t.home.visitors}</p>
+        <img class="visitor-img" src="https://count.getloli.com/@YangShiDanny?theme=minecraft&padding=4&offset=0&align=top&scale=1&pixelated=1&darkmode=1" alt="Visitor counter" />
+      </div>
+      -->
+    </div>
+  </section>
+
+  <style>
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+    .stat {
+      padding: 24px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+    .stat-value {
+      font-family: var(--font-display);
+      font-size: 2.5rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .stat-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+    .skill-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px 40px;
+      margin-bottom: 48px;
+    }
+    .skill-head {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      color: var(--on-panel);
+      margin-bottom: 8px;
+    }
+    .skill-pct {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .skill-bar {
+      height: 6px;
+      border-radius: 999px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    .skill-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--text);
+    }
+    .subheading {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--faint);
+      margin: 0 0 16px;
+    }
+    @media (max-width: 640px) {
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .skill-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</BaseLayout>

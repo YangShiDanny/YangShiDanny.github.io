@@ -1,0 +1,59 @@
+---
+---
+<div id="custom-cursor"></div>
+<div id="custom-cursor-ring"></div>
+
+<script>
+const cursor = document.querySelector('#custom-cursor') as HTMLDivElement;
+const ring = document.querySelector('#custom-cursor-ring') as HTMLDivElement;
+
+if (cursor && ring) {
+  let mouseX = window.innerWidth / 2;
+  let mouseY = window.innerHeight / 2;
+  let ringX = mouseX, ringY = mouseY;
+  let currentMode = 'idle';
+
+  window.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    cursor.style.left = mouseX + 'px';
+    cursor.style.top = mouseY + 'px';
+    cursor.classList.remove('is-hidden');
+    ring.classList.remove('is-hidden');
+  });
+
+  document.addEventListener('mouseleave', () => {
+    cursor.classList.add('is-hidden');
+    ring.classList.add('is-hidden');
+  });
+
+  function animateRing() {
+    ringX += (mouseX - ringX) * 0.18;
+    ringY += (mouseY - ringY) * 0.18;
+    ring.style.left = ringX + 'px';
+    ring.style.top = ringY + 'px';
+    requestAnimationFrame(animateRing);
+  }
+  animateRing();
+
+  function setMode(mode: string) {
+    if (mode === currentMode) return;
+    currentMode = mode;
+    cursor.classList.remove('is-text', 'is-link');
+    ring.classList.remove('is-text', 'is-link');
+    if (mode === 'text') cursor.classList.add('is-text');
+    if (mode === 'link') { cursor.classList.add('is-link'); ring.classList.add('is-link'); }
+  }
+
+  function update(t: EventTarget | null) {
+    if (!(t instanceof HTMLElement)) return;
+    const isText = t.matches('p,h1,h2,h3,h4,h5,h6,span,li,input,textarea,code');
+    const isLink = !!t.closest('a,button');
+    if (isLink) setMode('link');
+    else if (isText) setMode('text');
+    else setMode('idle');
+  }
+
+  document.addEventListener('mouseover', e => update(e.target));
+}
+</script>

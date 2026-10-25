@@ -1,0 +1,98 @@
+---
+// 星空背景：轻量 canvas，主题自适应（暗色白星 / 亮色暗星），带轻微闪烁
+---
+<canvas id="starfield" aria-hidden="true"></canvas>
+
+<script>
+  const canvas = document.getElementById('starfield') as HTMLCanvasElement | null;
+  if (canvas) {
+    const ctx = canvas.getContext('2d');
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let stars: { x: number; y: number; r: number; a: number; sp: number; ph: number }[] = [];
+    let raf = 0;
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    function themeColor(): [number, number, number] {
+      const t = document.documentElement.getAttribute('data-theme');
+      if (t === 'light') return [70, 70, 95];
+      return [255, 255, 255];
+    }
+
+    function resize() {
+      if (!ctx) return;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas!.width = w * dpr;
+      canvas!.height = h * dpr;
+      canvas!.style.width = w + 'px';
+      canvas!.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const count = Math.min(320, Math.floor((w * h) / 4800));
+      stars = Array.from({ length: count }, () => {
+        const r = Math.random() * 1.4 + 0.4;
+        return {
+          x: Math.random() * w,
+          y: Math.random() * h,
+          r,
+          a: Math.random() * 0.55 + 0.35,
+          sp: Math.random() * 0.0016 + 0.0004,
+          ph: Math.random() * Math.PI * 2,
+        };
+      });
+    }
+
+    function drawStatic() {
+      if (!ctx) return;
+      const [cr, cg, cb] = themeColor();
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      ctx.clearRect(0, 0, w, h);
+      for (const s of stars) {
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${s.a})`;
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function loop(t: number) {
+      if (!ctx) return;
+      const [cr, cg, cb] = themeColor();
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      ctx.clearRect(0, 0, w, h);
+      for (const s of stars) {
+        const tw = s.a * (0.55 + 0.45 * Math.sin(t * s.sp + s.ph));
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${tw})`;
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(loop);
+    }
+
+    function start() {
+      cancelAnimationFrame(raf);
+      if (reduceMotion) {
+        drawStatic();
+      } else {
+        raf = requestAnimationFrame(loop);
+      }
+    }
+
+    const onTheme = () => {
+      // 主题切换后重新取色并重绘
+      if (reduceMotion) drawStatic();
+    };
+    window.addEventListener('themechange', onTheme);
+    window.addEventListener('resize', () => {
+      resize();
+      drawStatic();
+    });
+
+    resize();
+    start();
+  }
+</script>

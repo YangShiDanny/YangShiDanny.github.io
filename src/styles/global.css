@@ -1,0 +1,615 @@
+/* ============================================================
+   Yangshi — 极简技术风设计系统（参考 nokarin.xyz）
+   纯黑/纯白双主题 + 等宽标签 + 细边框卡片 + 星空背景
+   ============================================================ */
+
+/* ---------- 字体 ---------- */
+@font-face {
+  font-family: 'Cal Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/cal-sans-latin-400.woff2') format('woff2');
+}
+
+/* ---------- CSS 变量：暗色（默认） ---------- */
+:root {
+  --bg: #050507;
+  --bg-soft: #0a0a0c;
+  --panel: #0b0b0d;
+  --panel-2: #111114;
+  --text: #fafafa;
+  --on-panel: #e5e5e5;
+  --muted: #8a8a8a;
+  --faint: #555555;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --hover: rgba(255, 255, 255, 0.06);
+  --hover-strong: rgba(255, 255, 255, 0.10);
+  --nav-bg: rgba(8, 8, 10, 0.62);
+  --nav-border: rgba(255, 255, 255, 0.08);
+  --cursor: #ffffff;
+  --cursor-soft: rgba(255, 255, 255, 0.5);
+  --cursor-glow: rgba(255, 255, 255, 0.6);
+  --selection-bg: rgba(255, 255, 255, 0.9);
+  --selection-fg: #000000;
+  --star: 255, 255, 255;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Source Han Sans SC',
+    'Noto Sans CJK SC', 'Source Han Sans CN', 'PingFang SC',
+    'Microsoft YaHei', 'SimHei', sans-serif;
+  --font-display: 'Cal Sans', 'Source Han Sans SC', 'Noto Sans CJK SC', 'Source Han Sans CN',
+    'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+}
+
+/* ---------- CSS 变量：亮色（白天模式） ---------- */
+[data-theme='light'] {
+  --bg: #f4f4f3;
+  --bg-soft: #ececeb;
+  --panel: #ffffff;
+  --panel-2: #f1f1f0;
+  --text: #0a0a0a;
+  --on-panel: #18181b;
+  --muted: #6b6b6b;
+  --faint: #a1a1a1;
+  --border: rgba(0, 0, 0, 0.10);
+  --border-strong: rgba(0, 0, 0, 0.20);
+  --hover: rgba(0, 0, 0, 0.04);
+  --hover-strong: rgba(0, 0, 0, 0.08);
+  --nav-bg: rgba(255, 255, 255, 0.68);
+  --nav-border: rgba(0, 0, 0, 0.10);
+  --cursor: #0a0a0a;
+  --cursor-soft: rgba(0, 0, 0, 0.45);
+  --cursor-glow: rgba(0, 0, 0, 0.3);
+  --selection-bg: rgba(0, 0, 0, 0.9);
+  --selection-fg: #ffffff;
+  --star: 70, 70, 95;
+}
+
+/* ---------- 基础重置 ---------- */
+/* 框选高亮：淡灰色，白天 / 黑夜一致 */
+::selection {
+  background: rgba(200, 200, 200, 0.9);
+  color: #111111;
+}
+::-moz-selection {
+  background: rgba(200, 200, 200, 0.9);
+  color: #111111;
+}
+
+html {
+  view-transition-name: root;
+  scroll-behavior: smooth;
+}
+
+html {
+  background-color: var(--bg);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  /* 背景色仅画在 html 上；body 保持透明，否则会盖住 z-index:-1 的星空 canvas */
+  background-color: transparent;
+  color: var(--text);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.6;
+}
+
+* {
+  box-sizing: border-box;
+  cursor: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ---------- 星空背景 ---------- */
+#starfield {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+  display: block;
+}
+
+/* ---------- 布局容器 ---------- */
+.container {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+main {
+  padding-top: 96px; /* 给固定顶部导航留空间 */
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- 顶部导航（居中浮动玻璃药丸，仿 nokarin.xyz） ---------- */
+.topnav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 16px 16px 0;
+  pointer-events: none; /* 留白处可穿透，仅药丸本身接收点击 */
+}
+
+.topnav-pill {
+  pointer-events: auto;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: var(--nav-bg);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--nav-border);
+  transition: background 0.4s ease, border-color 0.4s ease;
+}
+
+.topnav-brand {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  padding: 6px 14px 6px 12px;
+  white-space: nowrap;
+}
+
+.topnav-404 {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  margin-right: 4px;
+}
+
+.topnav-links {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.topnav-link {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  padding: 8px 14px;
+  border-radius: 999px;
+  white-space: nowrap;
+  transition: color 0.3s ease, background 0.3s ease;
+}
+
+.topnav-link:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.topnav-link.active {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
+.topnav-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--nav-border);
+}
+
+.topnav-lang {
+  margin-left: 0;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 2px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: none;
+  transition: color 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+}
+.theme-toggle:hover {
+  color: var(--text);
+  background: var(--hover);
+  border-color: var(--nav-border);
+}
+.theme-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+@media (max-width: 640px) {
+  .topnav {
+    padding: 10px 10px 0;
+  }
+  .topnav-pill {
+    width: 100%;
+    max-width: 100%;
+    justify-content: space-between;
+    border-radius: 16px;
+    padding: 6px 10px;
+  }
+  .topnav-brand {
+    padding: 6px 8px;
+    font-size: 0.95rem;
+  }
+  .topnav-link {
+    padding: 7px 9px;
+    letter-spacing: 0.08em;
+  }
+  .topnav-divider {
+    margin: 0 2px;
+  }
+}
+
+/* ---------- 通用工具类 ---------- */
+.section {
+  padding: 72px 0;
+}
+
+.section + .section {
+  border-top: 1px solid var(--border);
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--faint);
+  margin: 0 0 12px;
+}
+
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--text);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition: border-color 0.25s ease, transform 0.25s ease;
+}
+
+.card:hover {
+  border-color: var(--border-strong);
+}
+
+/* ---------- 徽章 / 标签 ---------- */
+.tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ---------- 按钮 ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 12px 24px;
+  border-radius: 8px;
+  transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.btn-primary {
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  opacity: 0.85;
+}
+
+.btn-outline {
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+
+.btn-outline:hover {
+  background: var(--hover);
+}
+
+/* 链接内的 star 图标 + 箭头 hover 动画 */
+.btn .icon-star {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.btn .icon-arrow {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.btn:hover .icon-arrow {
+  transform: translateX(4px);
+}
+
+/* ---------- 自定义光标（白色圆点 + 由小变大的玻璃光环，主题自适应） ---------- */
+#custom-cursor,
+#custom-cursor-ring {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 9999;
+  border-radius: 999px;
+  will-change: transform, width, height, opacity, border-color, box-shadow;
+  transform: translate(-50%, -50%);
+}
+
+#custom-cursor {
+  width: 8px;
+  height: 8px;
+  background-color: var(--cursor);
+  box-shadow: 0 0 10px var(--cursor-glow);
+  opacity: 1;
+  transition:
+    width 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.28s ease,
+    transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+#custom-cursor-ring {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--cursor-soft);
+  background: radial-gradient(
+    circle at center,
+    rgba(var(--star), 0.12) 0%,
+    rgba(var(--star), 0.04) 50%,
+    transparent 72%
+  );
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.1);
+  transition:
+    opacity 0.28s ease,
+    transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+#custom-cursor.is-text {
+  width: 2px;
+  height: 20px;
+  border-radius: 2px;
+  background-color: var(--cursor);
+  box-shadow: 0 0 8px var(--cursor-glow);
+}
+
+#custom-cursor-ring.is-text {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.1);
+}
+
+#custom-cursor.is-link {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.1);
+}
+
+#custom-cursor-ring.is-link {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  border-color: var(--cursor);
+  box-shadow:
+    0 0 20px var(--cursor-glow),
+    inset 0 0 12px rgba(var(--star), 0.2);
+}
+
+#custom-cursor.is-hidden,
+#custom-cursor-ring.is-hidden {
+  opacity: 0 !important;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  * {
+    cursor: auto !important;
+  }
+  #custom-cursor,
+  #custom-cursor-ring {
+    display: none;
+  }
+  .theme-toggle {
+    cursor: pointer !important;
+  }
+}
+
+/* ---------- 原生 View Transition 横向滑动动画 ---------- */
+@view-transition {
+  navigation: auto;
+}
+::view-transition-old(root) {
+  animation: slideOutLeft 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-new(root) {
+  animation: slideInRight 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+:root[data-back] ::view-transition-old(root) {
+  animation: slideOutRight 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+:root[data-back] ::view-transition-new(root) {
+  animation: slideInLeft 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes slideOutLeft {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(-100%); opacity: 1; }
+}
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 1; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideOutRight {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 1; }
+}
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); opacity: 1; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* ---------- Arsenal 工具箱（仿 nokarin 悬停动画） ---------- */
+.arsenal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.arsenal-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.arsenal-tile {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition:
+    transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background 0.3s ease,
+    border-color 0.3s ease;
+}
+.arsenal-tile:hover {
+  transform: translateY(-4px);
+  background: var(--hover-strong);
+  border-color: var(--border-strong);
+}
+.arsenal-icon {
+  width: 30px;
+  height: 30px;
+  filter: grayscale(1);
+  opacity: 0.55;
+  transition: filter 0.3s ease, opacity 0.3s ease;
+}
+.arsenal-item:hover .arsenal-icon {
+  filter: grayscale(0);
+  opacity: 1;
+}
+.arsenal-text {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color 0.3s ease;
+}
+.arsenal-item:hover .arsenal-text {
+  color: var(--text);
+}
+.arsenal-tip {
+  position: absolute;
+  bottom: -22px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  pointer-events: none;
+}
+.arsenal-item:hover .arsenal-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 自定义图片 logo（如 AstraEditor 白色 logo）：用 mask 上色，悬停变 #3af */
+.arsenal-logo {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  background-color: #ffffff; /* 暗色默认白色 */
+  -webkit-mask: var(--logo) center / contain no-repeat;
+  mask: var(--logo) center / contain no-repeat;
+  transition: background-color 0.25s ease;
+}
+[data-theme='light'] .arsenal-logo {
+  background-color: #18181b; /* 亮色默认深色 */
+}
+.arsenal-item:hover .arsenal-logo {
+  background-color: #33aaff; /* 悬停变蓝 #3af */
+}
+
+/* ---------- 二次元访问统计 ---------- */
+.visitor {
+  margin-top: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.visitor-img {
+  display: block;
+  image-rendering: pixelated;
+  border-radius: 6px;
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 640px) {
+  .container {
+    padding: 0 18px;
+  }
+  .section {
+    padding: 48px 0;
+  }
+}

@@ -1,0 +1,172 @@
+---
+import BaseLayout from '../../components/BaseLayout.astro';
+import translations from '../../i18n';
+import type { Locale } from '../../i18n';
+
+const locale = Astro.currentLocale as Locale;
+const t = translations[locale];
+
+const birth = new Date('2011-09-27');
+const now = new Date();
+let age = now.getFullYear() - birth.getFullYear();
+const hadBirthdayThisYear = (now.getMonth() > birth.getMonth()) || (now.getMonth() === birth.getMonth() && now.getDate() >= birth.getDate());
+if (!hadBirthdayThisYear) age--;
+---
+
+<BaseLayout title={`${t.about.heading} | 羊史`}>
+  <section class="section">
+    <div class="container">
+      <p class="eyebrow">{t.about.heading}</p>
+      <h1 class="display" style="font-size: clamp(2.25rem, 6vw, 3.75rem); margin: 0 0 24px;">
+        {t.about.tagline}
+      </h1>
+      <p class="muted" style="max-width: 40rem; font-size: 1.125rem;">
+        {t.about.intro}
+      </p>
+
+      <div class="meta">
+        <div class="meta-item">
+          <span class="meta-label">{t.about.ageLabel}</span>
+          <span class="meta-value">{age}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">{t.about.birth}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">{t.about.location}</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container about-split">
+      <aside class="about-aside">
+        <p class="eyebrow about-eyebrow"><span class="rule"></span>{t.about.focusLabel}</p>
+        <p class="focus-text">{t.about.focusText}</p>
+      </aside>
+
+      <div class="about-main">
+        <h2 class="display" style="font-size: clamp(1.5rem, 3.5vw, 2rem); margin: 0 0 40px;">
+          {t.about.masteryHeading}
+        </h2>
+
+        <div class="mastery-grid">
+          {t.about.mastery.map((m) => (
+            <div class="mastery-col">
+              <h3 class="subheading">{m.area}</h3>
+              <div class="arsenal">
+                {m.items.map((item) => (
+                  <div class="arsenal-item">
+                    <div class="arsenal-tile">
+                      {item.img ? (
+                        <span class="arsenal-logo" style={`--logo:url(${item.img})`} role="img" aria-label={item.name}></span>
+                      ) : (
+                        <img class="arsenal-icon" src={`https://skillicons.dev/icons?i=${item.icon}`} alt={item.name} width="28" height="28" loading="lazy" />
+                      )}
+                    </div>
+                    <span class="arsenal-tip">{item.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <style>
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 32px;
+      margin-top: 40px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+    }
+    .meta-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .meta-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--faint);
+    }
+    .meta-value {
+      font-size: 16px;
+      color: var(--on-panel);
+    }
+    .focus-text {
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.75;
+      margin: 18px 0 0;
+      max-width: 30rem;
+    }
+    .mastery-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 40px;
+    }
+    .subheading {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--faint);
+      margin: 0 0 18px;
+    }
+    /* 技术栈内的工具箱与首页一致；预留 tooltip 空间避免重叠 */
+    .mastery-col .arsenal {
+      padding-bottom: 26px;
+    }
+
+    /* 左右两栏布局（仿 nokarin #about）：左窄栏 sticky 小标签 + 右宽栏内容 */
+    .about-split {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 28px;
+    }
+    .about-aside {
+      min-width: 0;
+    }
+    .about-eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin: 0;
+    }
+    .about-eyebrow .rule {
+      width: 32px;
+      height: 1px;
+      background: var(--faint);
+      display: inline-block;
+      flex: none;
+    }
+    .about-main {
+      min-width: 0;
+    }
+    @media (min-width: 1024px) {
+      .about-split {
+        grid-template-columns: 5fr 7fr;
+        gap: 64px;
+        align-items: start;
+      }
+      .about-aside {
+        position: sticky;
+        top: 128px;
+      }
+    }
+    @media (max-width: 640px) {
+      .mastery-grid {
+        grid-template-columns: 1fr;
+        gap: 28px;
+      }
+    }
+  </style>
+</BaseLayout>

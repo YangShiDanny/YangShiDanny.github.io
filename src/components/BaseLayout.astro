@@ -1,0 +1,70 @@
+---
+import '../styles/global.css';
+import Cursor from './Cursor.astro';
+import TopNav from './TopNav.astro';
+import Starfield from './Starfield.astro';
+import translations from '../i18n';
+import type { Locale } from '../i18n';
+
+const locale = Astro.currentLocale as Locale;
+const t = translations[locale];
+const { title = t.siteTitle, is404 = false } = Astro.props;
+---
+<!DOCTYPE html>
+<html lang={locale}>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <script is:inline>
+    // 主题初始化：优先 localStorage，其次系统偏好，避免闪烁
+    (() => {
+      try {
+        const saved = localStorage.getItem('site-theme');
+        const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+        const theme =
+          saved === 'light' || saved === 'dark' ? saved : prefersLight ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <script>
+    (() => {
+      const storedLang = localStorage.getItem('site-lang');
+      const path = location.pathname;
+      const isZhPath = path.startsWith('/zh');
+
+      let targetLang;
+      if (storedLang) {
+        targetLang = storedLang;
+      } else {
+        const prefs = navigator.languages || [navigator.language];
+        const isChinese = prefs.some(lang => lang.startsWith('zh'));
+        targetLang = isChinese ? 'zh' : 'en';
+      }
+
+      if (targetLang === 'zh' && !isZhPath) {
+        location.replace('/zh' + path);
+      } else if (targetLang === 'en' && isZhPath) {
+        location.replace(path.replace('/zh', '') || '/');
+      }
+    })();
+  </script>
+</head>
+<body>
+  <Starfield />
+  <Cursor />
+  <TopNav is404={is404} />
+  <main>
+    <slot />
+  </main>
+</body>
+</html>
