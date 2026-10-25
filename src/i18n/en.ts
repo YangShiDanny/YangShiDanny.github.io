@@ -50,7 +50,7 @@ export default {
         name: "Lume",
         desc: "My personal static site / web framework experiment built for creative sites.",
         tags: ["Astro", "TypeScript", "SSG"],
-        link: "https://github.com/YangShiDanny/lume"
+        link: "https://yangshidanny.github.io/lume/"
       }
     ]
   },

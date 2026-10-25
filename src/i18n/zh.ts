@@ -48,7 +48,7 @@ export default {
         name: "Lume",
         desc: "我自己做的静态站点/网页框架实验，面向创意站点开发。",
         tags: ["Astro", "TypeScript", "SSG"],
-        link: "https://github.com/YangShiDanny/lume"
+        link: "https://yangshidanny.github.io/lume/"
       }
     ]
   },
