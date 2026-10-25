@@ -3,7 +3,8 @@ export default {
   nav: {
     home: "首页",
     projects: "项目",
-    about: "关于"
+    about: "关于",
+    contact: "联系"
   },
   ui: {
     switchZh: "中文",
@@ -79,5 +80,27 @@ export default {
         { name: "AstraEditor", img: "/icons/astraeditor.svg" }
       ]}
     ]
+  },
+  contact: {
+    heading: "联系",
+    title: "说点什么。",
+    intro:
+      "发现 bug、有想法，或者只是想聊两句？在下面留个言吧，每条我都会看。平时要上学，回复可能会慢一点。",
+    formLabel: "留言表单",
+    nameLabel: "称呼",
+    namePlaceholder: "选填",
+    emailLabel: "邮箱",
+    emailPlaceholder: "选填，方便我回信",
+    messageLabel: "留言",
+    messagePlaceholder: "想说什么都可以…",
+    submit: "发送消息",
+    sending: "发送中…",
+    success: "收到啦，谢谢你的留言！",
+    error: "发送失败，请稍后再试。",
+    empty: "请先写点内容。",
+    fallbackNote: "或者直接发邮件",
+    directLabel: "其他联系方式",
+    githubLabel: "GitHub",
+    directEmail: "邮箱"
   }
 }

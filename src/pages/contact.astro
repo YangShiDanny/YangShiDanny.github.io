@@ -1,0 +1,293 @@
+---
+import BaseLayout from '../components/BaseLayout.astro';
+import translations from '../i18n';
+import type { Locale } from '../i18n';
+import { CONTACT } from '../config';
+
+const locale = Astro.currentLocale as Locale;
+const t = translations[locale];
+
+// FormSubmit 的 AJAX 端点：纯静态站也能收留言，无需后端
+const endpoint = `https://formsubmit.co/ajax/${CONTACT.email}`;
+---
+
+<BaseLayout title={`${t.contact.heading} | Yangshi`}>
+  <section class="section">
+    <div class="container">
+      <p class="eyebrow">{t.contact.heading}</p>
+      <h1 class="display" style="font-size: clamp(2.25rem, 6vw, 3.5rem); margin: 0 0 20px;">
+        {t.contact.title}
+      </h1>
+      <p class="muted intro">{t.contact.intro}</p>
+
+      <form
+        id="contact-form"
+        class="contact-form"
+        action={endpoint}
+        method="POST"
+        novalidate
+        data-msg-sending={t.contact.sending}
+        data-msg-success={t.contact.success}
+        data-msg-error={t.contact.error}
+        data-msg-empty={t.contact.empty}
+      >
+        <input type="hidden" name="_subject" value="New message from yangshidanny.github.io" />
+        <input type="hidden" name="_template" value="table" />
+        <input type="hidden" name="_captcha" value="false" />
+        <!-- 蜜罐：真人看不到，机器人填了就会被 FormSubmit 丢弃 -->
+        <input type="text" name="_honey" class="honey" tabindex="-1" autocomplete="off" aria-hidden="true" />
+
+        <div class="field">
+          <label for="cf-name">{t.contact.nameLabel}</label>
+          <input
+            id="cf-name"
+            name="name"
+            type="text"
+            autocomplete="name"
+            placeholder={t.contact.namePlaceholder}
+          />
+        </div>
+
+        <div class="field">
+          <label for="cf-email">{t.contact.emailLabel}</label>
+          <input
+            id="cf-email"
+            name="email"
+            type="email"
+            autocomplete="email"
+            placeholder={t.contact.emailPlaceholder}
+          />
+        </div>
+
+        <div class="field">
+          <label for="cf-message">{t.contact.messageLabel}</label>
+          <textarea
+            id="cf-message"
+            name="message"
+            rows="6"
+            required
+            placeholder={t.contact.messagePlaceholder}></textarea>
+        </div>
+
+        <div class="form-actions">
+          <button id="cf-submit" class="btn btn-primary" type="submit">
+            <span id="cf-submit-text">{t.contact.submit}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-arrow" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+          </button>
+          <p id="cf-status" class="form-status" role="status" aria-live="polite"></p>
+        </div>
+      </form>
+
+      <div class="channels">
+        <p class="eyebrow">{t.contact.directLabel}</p>
+        <div class="channel-list">
+          <a class="channel" href={`mailto:${CONTACT.email}`}>
+            <span class="channel-label">{t.contact.directEmail}</span>
+            <span class="channel-value">{CONTACT.email}</span>
+          </a>
+          <a class="channel" href={CONTACT.github} target="_blank" rel="noopener noreferrer">
+            <span class="channel-label">{t.contact.githubLabel}</span>
+            <span class="channel-value">@YangShiDanny</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <style>
+    .intro {
+      max-width: 40rem;
+      font-size: 1.0625rem;
+      margin: 0;
+    }
+
+    .contact-form {
+      margin-top: 48px;
+      max-width: 40rem;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      padding: 28px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .field label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--faint);
+    }
+
+    .field input,
+    .field textarea {
+      width: 100%;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      color: var(--text);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      outline: none;
+      caret-color: var(--text);
+      transition: border-color 0.25s ease, background 0.25s ease;
+    }
+
+    .field input::placeholder,
+    .field textarea::placeholder {
+      color: var(--faint);
+    }
+
+    .field input:focus,
+    .field textarea:focus {
+      border-color: var(--border-strong);
+      background: var(--hover);
+    }
+
+    .field textarea {
+      min-height: 150px;
+      line-height: 1.65;
+      resize: vertical;
+    }
+
+    .form-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .contact-form .btn:disabled {
+      opacity: 0.55;
+    }
+
+    .form-status {
+      margin: 0;
+      font-size: 13px;
+      color: var(--muted);
+      transition: color 0.25s ease;
+    }
+    .form-status[data-kind='ok'] {
+      color: #33aaff;
+    }
+    .form-status[data-kind='err'] {
+      color: #ff6b6b;
+    }
+    [data-theme='light'] .form-status[data-kind='err'] {
+      color: #d93025;
+    }
+
+    .honey {
+      display: none !important;
+    }
+
+    /* 其他联系方式 */
+    .channels {
+      margin-top: 40px;
+      max-width: 40rem;
+    }
+    .channel-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .channel {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 16px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      transition: border-color 0.25s ease, background 0.25s ease;
+    }
+    .channel:hover {
+      border-color: var(--border-strong);
+      background: var(--hover);
+    }
+    .channel-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--faint);
+    }
+    .channel-value {
+      font-size: 14px;
+      color: var(--on-panel);
+    }
+
+    @media (max-width: 640px) {
+      .contact-form {
+        padding: 20px;
+        margin-top: 32px;
+      }
+    }
+  </style>
+
+  <script>
+    const form = document.getElementById('contact-form') as HTMLFormElement | null;
+    const submitBtn = document.getElementById('cf-submit') as HTMLButtonElement | null;
+    const submitText = document.getElementById('cf-submit-text') as HTMLElement | null;
+    const status = document.getElementById('cf-status') as HTMLElement | null;
+    const messageField = document.getElementById('cf-message') as HTMLTextAreaElement | null;
+
+    if (form && submitBtn && submitText && status && messageField) {
+      const d = form.dataset;
+      const defaultLabel = submitText.textContent || '';
+
+      const setStatus = (text: string, kind: 'ok' | 'err' | '') => {
+        status.textContent = text;
+        status.dataset.kind = kind;
+      };
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        if (!messageField.value.trim()) {
+          setStatus(d.msgEmpty || '', 'err');
+          messageField.focus();
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitText.textContent = d.msgSending || defaultLabel;
+        setStatus('', '');
+
+        const payload: Record<string, string> = {};
+        new FormData(form).forEach((value, key) => {
+          payload[key] = String(value);
+        });
+
+        try {
+          const res = await fetch(form.action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const json = await res.json().catch(() => ({} as { success?: unknown }));
+
+          if (res.ok && String((json as { success?: unknown }).success) === 'true') {
+            form.reset();
+            setStatus(d.msgSuccess || '', 'ok');
+          } else {
+            setStatus(d.msgError || '', 'err');
+          }
+        } catch {
+          setStatus(d.msgError || '', 'err');
+        } finally {
+          submitBtn.disabled = false;
+          submitText.textContent = defaultLabel;
+        }
+      });
+    }
+  </script>
+</BaseLayout>

@@ -3,7 +3,8 @@ export default {
   nav: {
     home: "Home",
     projects: "Projects",
-    about: "About"
+    about: "About",
+    contact: "Contact"
   },
   ui: {
     switchZh: "中文",
@@ -81,5 +82,27 @@ export default {
         { name: "AstraEditor", img: "/icons/astraeditor.svg" }
       ]}
     ]
+  },
+  contact: {
+    heading: "Contact",
+    title: "Say something.",
+    intro:
+      "Found a bug, have an idea, or just want to talk? Leave a message below — I read every one of them. Replies may be slow since I'm usually at school.",
+    formLabel: "Message Form",
+    nameLabel: "Name",
+    namePlaceholder: "Optional",
+    emailLabel: "Email",
+    emailPlaceholder: "Optional — so I can write back",
+    messageLabel: "Message",
+    messagePlaceholder: "Type anything here…",
+    submit: "Send Message",
+    sending: "Sending…",
+    success: "Got it. Thanks for writing!",
+    error: "Couldn't send. Please try again later.",
+    empty: "Please write a message first.",
+    fallbackNote: "Direct email instead",
+    directLabel: "Elsewhere",
+    githubLabel: "GitHub",
+    directEmail: "Email"
   }
 }
