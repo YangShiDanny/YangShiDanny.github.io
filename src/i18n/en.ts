@@ -11,8 +11,8 @@ export default {
   },
   home: {
     greeting: "Yangshi",
-    role: "Full-Stack Developer",
-    bio: "A young developer building creative websites and tools. I focus on bridging clean front-end experiences with solid, performant backends.",
+    role: "Computer Enthusiast",
+    bio: "A middle-school student who just loves computers. I tinker with small websites and tools in my spare time, purely because it's fun.",
     viewProjects: "View Projects",
     aboutMe: "About Me",
     // 统计
@@ -56,8 +56,8 @@ export default {
   },
   about: {
     heading: "About",
-    tagline: "Engineering Digital Reality.",
-    intro: "I love web development, static site builders and frontend experiments. My focus is crafting scalable web apps and clean, intuitive interfaces.",
+    tagline: "Always tinkering.",
+    intro: "I'm a middle-school student in Shanghai who's into computers as a whole — web pages, static site generators, and all kinds of random front-end experiments. I build things for fun, not for a job title.",
     ageLabel: "Age",
     birth: "Born: 2011-09-27",
     location: "Location: Shanghai",
