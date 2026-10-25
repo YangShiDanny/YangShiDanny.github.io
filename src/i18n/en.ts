@@ -48,6 +48,12 @@ export default {
     archive: "View Archive",
     items: [
       {
+        name: "LumeOS",
+        desc: "A pretend operating system that runs in a browser tab — window manager, shell, virtual filesystem. No backend, no framework, no build step.",
+        tags: ["Vanilla JS", "Canvas", "UI"],
+        link: "/LumeOS/"
+      },
+      {
         name: "Lume",
         desc: "My personal static site / web framework experiment built for creative sites.",
         tags: ["Astro", "TypeScript", "SSG"],

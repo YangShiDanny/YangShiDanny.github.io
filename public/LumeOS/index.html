@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-wall="stars">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>LumeOS</title>
+  <meta name="description" content="LumeOS — a tiny pretend operating system that lives in your browser." />
+  <meta name="theme-color" content="#050507" />
+  <link rel="icon" href="assets/lume.svg" type="image/svg+xml" />
+  <link rel="preload" href="assets/fonts/inter-latin-var.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="assets/fonts/cal-sans-subset.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <script>
+    // 主题 / 壁纸 / 强调色在首帧前就定下来，避免闪白
+    (() => {
+      try {
+        const t = localStorage.getItem('lume.theme');
+        const w = localStorage.getItem('lume.wall');
+        const a = localStorage.getItem('lume.accent');
+        const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+        document.documentElement.dataset.theme = t || (prefersLight ? 'light' : 'dark');
+        if (w) document.documentElement.dataset.wall = w;
+        if (a) document.documentElement.style.setProperty('--accent', a);
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <!-- 壁纸 -->
+  <canvas id="wallpaper" aria-hidden="true"></canvas>
+  <div class="wall-grid" aria-hidden="true"></div>
+  <div class="wall-glow" aria-hidden="true"></div>
+
+  <!-- 自定义光标 -->
+  <div id="cursor" aria-hidden="true"></div>
+  <div id="cursor-ring" aria-hidden="true"></div>
+
+  <!-- ============ 开机 ============ -->
+  <div class="boot" id="boot">
+    <div class="boot-inner">
+      <svg class="boot-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true">
+        <path d="M12 2.2 14.5 9.5 21.8 12l-7.3 2.5L12 21.8 9.5 14.5 2.2 12l7.3-2.5z" />
+      </svg>
+      <div class="boot-word">LUME<span>OS</span></div>
+      <div class="boot-bar"><i id="boot-bar"></i></div>
+      <pre class="boot-log" id="boot-log"></pre>
+    </div>
+    <div class="boot-version">v1.0 · nebula</div>
+  </div>
+
+  <!-- ============ 桌面 ============ -->
+  <div class="desktop" id="desktop" aria-hidden="true">
+
+    <!-- 菜单栏 -->
+    <header class="menubar">
+      <div class="menubar-side">
+        <button class="mb-logo" id="mb-logo" type="button" aria-label="System menu" aria-haspopup="menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+            <path d="M12 2.6 14.4 9.6 21.4 12l-7 2.4L12 21.4 9.6 14.4 2.6 12l7-2.4z" />
+          </svg>
+        </button>
+        <span class="mb-app" id="mb-app">LumeOS</span>
+      </div>
+
+      <div class="menubar-side menubar-right">
+        <button class="mb-btn" id="mb-search" type="button" aria-label="Search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></svg>
+          <span class="mb-key">⌘K</span>
+        </button>
+        <button class="mb-btn" id="mb-theme" type="button" aria-label="Toggle theme">
+          <svg class="ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+          <svg class="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
+        </button>
+        <div class="mb-status" id="mb-status" aria-label="System status">
+          <span class="mb-dot" title="Network"></span>
+          <span class="mb-dot" title="Battery"></span>
+        </div>
+        <time class="mb-clock" id="mb-clock">--:--</time>
+      </div>
+    </header>
+
+    <!-- 桌面图标 -->
+    <div class="desk-icons" id="desk-icons"></div>
+
+    <!-- 窗口层 -->
+    <div class="windows" id="windows"></div>
+
+    <!-- Dock -->
+    <nav class="dock" id="dock" aria-label="Dock">
+      <div class="dock-inner" id="dock-inner"></div>
+      <span class="dock-sep" aria-hidden="true"></span>
+      <button class="dock-item dock-power" id="dock-power" type="button" aria-label="Shut down">
+        <span class="dock-tile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8" /><path d="M6.3 6.3a8 8 0 1 0 11.4 0" /></svg>
+        </span>
+        <span class="dock-tip">Power</span>
+      </button>
+    </nav>
+
+    <!-- 系统菜单 -->
+    <div class="menu" id="sys-menu" hidden>
+      <div class="menu-head">
+        <span class="menu-title">LumeOS 1.0</span>
+        <span class="menu-sub">nebula · x86_64</span>
+      </div>
+      <button class="menu-item" data-cmd="about" type="button">About This System</button>
+      <button class="menu-item" data-cmd="settings" type="button">System Settings…</button>
+      <div class="menu-sep"></div>
+      <button class="menu-item" data-cmd="lock" type="button">Lock Screen<span class="menu-hint">⌃⌘Q</span></button>
+      <button class="menu-item" data-cmd="restart" type="button">Restart</button>
+      <button class="menu-item danger" data-cmd="shutdown" type="button">Shut Down</button>
+      <div class="menu-sep"></div>
+      <button class="menu-item" data-cmd="home" type="button">Back to Website<span class="menu-hint">↗</span></button>
+    </div>
+
+    <!-- 右键菜单 -->
+    <div class="menu" id="ctx-menu" hidden></div>
+
+    <!-- Spotlight -->
+    <div class="spotlight" id="spotlight" hidden>
+      <div class="spot-box" role="dialog" aria-label="Search">
+        <div class="spot-field">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></svg>
+          <input id="spot-input" type="text" placeholder="Search apps, files, commands…" autocomplete="off" spellcheck="false" />
+          <kbd>esc</kbd>
+        </div>
+        <div class="spot-results" id="spot-results"></div>
+      </div>
+    </div>
+
+    <!-- 通知 -->
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+  </div>
+
+  <!-- 锁屏 / 关机 -->
+  <div class="veil" id="veil" hidden>
+    <div class="veil-inner">
+      <div class="veil-time" id="veil-time">--:--</div>
+      <div class="veil-date" id="veil-date"></div>
+      <button class="veil-btn" id="veil-btn" type="button">Press any key to continue</button>
+    </div>
+  </div>
+
+  <script src="js/icons.js"></script>
+  <script src="js/fs.js"></script>
+  <script src="js/apps.js"></script>
+  <script src="js/os.js"></script>
+</body>
+</html>

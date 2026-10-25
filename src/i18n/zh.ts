@@ -46,6 +46,12 @@ export default {
     archive: "查看归档",
     items: [
       {
+        name: "LumeOS",
+        desc: "一个跑在浏览器标签页里的伪操作系统——窗口管理器、终端、虚拟文件系统。没有后端，没有框架，也不需要构建。",
+        tags: ["原生 JS", "Canvas", "界面"],
+        link: "/LumeOS/"
+      },
+      {
         name: "Lume",
         desc: "我自己做的静态站点/网页框架实验，面向创意站点开发。",
         tags: ["Astro", "TypeScript", "SSG"],
