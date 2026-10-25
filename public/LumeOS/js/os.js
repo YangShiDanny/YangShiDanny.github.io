@@ -153,15 +153,55 @@
       if (next === mode) return;
       mode = next;
       dot.classList.toggle('is-text', next === 'text');
+      dot.classList.toggle('is-link', next === 'link');
       ring.classList.toggle('is-link', next === 'link');
     }
 
-    document.addEventListener('mouseover', (e) => {
-      const t = e.target;
-      if (!(t instanceof Element)) return;
-      if (t.closest('a,button,.dock-item,.win-light')) setMode('link');
-      else if (t.closest('input,textarea')) setMode('text');
-      else setMode('idle');
+    /* 元素自身是否直接含可见文字（不含子元素里的文字） */
+    function hasOwnText(node) {
+      for (let n = node.firstChild; n; n = n.nextSibling) {
+        if (n.nodeType === 3 && n.nodeValue.trim()) return true;
+      }
+      return false;
+    }
+
+    /* 文本类标签，即使文字在子节点里也算（如 <p><a>…</a></p> 的外层已归链接） */
+    const TEXT_TAGS = /^(p|h[1-6]|span|li|code|pre|label|small|strong|em|b|i|td|th|dd|dt|blockquote)$/i;
+
+    function modeFor(t) {
+      if (!(t instanceof Element)) return 'idle';
+
+      if (
+        t.closest(
+          'a,button,[role="button"],summary,label,' +
+            '.dock-item,.dock-power,.desk-icon,.menu-item,.win-light,.mb-btn,' +
+            '.seg,.swatch,.primary,.editor-btn,.files-row,.set-row,.veil-btn,.back'
+        )
+      ) {
+        return 'link';
+      }
+      if (t.closest('textarea,select,input,[contenteditable="true"]')) return 'text';
+      if (t.closest('.win-resize')) return 'idle';
+      /* 标题栏是拖拽区，保持原点 */
+      if (t.closest('.win-titlebar,.mb-clock,.menubar')) return 'idle';
+
+      /* 文字上竖线：自身带文字，或位于文本标签内 */
+      if (hasOwnText(t)) return 'text';
+      if (TEXT_TAGS.test(t.tagName) && t.textContent.trim()) return 'text';
+
+      return 'idle';
+    }
+
+    /* 光标本体 pointer-events:none，e.target 始终是它底下的真实元素 */
+    window.addEventListener(
+      'mousemove',
+      (e) => setMode(modeFor(e.target)),
+      { passive: true }
+    );
+    document.addEventListener('mouseover', (e) => setMode(modeFor(e.target)));
+    /* 拖拽/滚动/内容变化后指针不动也要刷新状态 */
+    window.addEventListener('scroll', () => setMode(modeFor(document.elementFromPoint(mx, my))), {
+      passive: true
     });
   })();
 

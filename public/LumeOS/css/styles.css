@@ -198,7 +198,7 @@ textarea {
   background: var(--cursor);
   box-shadow: 0 0 12px rgba(var(--star), 0.55);
   transition: width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), height 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 0.25s ease;
+    transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.22s ease;
 }
 #cursor-ring {
   width: 32px;
@@ -213,6 +213,12 @@ textarea {
   width: 2px;
   height: 18px;
   border-radius: 2px;
+  box-shadow: 0 0 8px rgba(var(--star), 0.45);
+}
+/* 悬停链接：白点收起，只剩光圈 */
+#cursor.is-link {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.15);
 }
 #cursor-ring.is-link {
   opacity: 1;
