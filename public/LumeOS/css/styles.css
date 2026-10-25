@@ -395,6 +395,42 @@ textarea {
 .mb-logo.open {
   background: var(--hover-strong);
 }
+
+/* 菜单栏最左的返回键：随时能回主站 */
+.mb-back {
+  width: 24px;
+  height: 26px;
+  padding: 0;
+  justify-content: center;
+  position: relative;
+}
+.mb-back:hover {
+  background: var(--hover-strong);
+}
+.mb-back-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--on-panel);
+  opacity: 0;
+  transform: translateY(-3px);
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.mb-back:hover .mb-back-tip,
+.mb-back:focus-visible .mb-back-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
 .mb-app {
   font-family: var(--font-display);
   font-size: 13px;
@@ -480,7 +516,24 @@ textarea {
   gap: 7px;
   text-align: center;
   border: 1px solid transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background 0.2s ease, border-color 0.2s ease;
+}
+.desk-icon:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.files-row .inline-rename {
+  text-align: left;
+  flex: 1;
+  width: auto;
+}
+.desktop .inline-rename {
+  text-align: center;
 }
 .desk-icon:hover {
   background: var(--hover);
@@ -1237,6 +1290,8 @@ textarea {
   color: var(--text);
 }
 .files-main {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 8px;
 }
@@ -1263,8 +1318,14 @@ textarea {
   border-radius: 7px;
   text-align: left;
   color: var(--on-panel);
-  transition: background 0.14s ease;
+  font: inherit;
   font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+.files-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 .files-row:hover {
   background: var(--hover);
@@ -1287,6 +1348,98 @@ textarea {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--faint);
+}
+
+/* 右侧：工具栏 + 列表 */
+.files-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.files-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+  flex: none;
+}
+.files-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 6px;
+  color: var(--muted);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.files-tool svg {
+  width: 15px;
+  height: 15px;
+}
+.files-tool:hover:not(:disabled) {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.files-tool:disabled {
+  opacity: 0.26;
+  cursor: default;
+}
+.files-bar .files-crumbs {
+  flex: 1;
+  min-width: 0;
+  padding: 0 2px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.crumb {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  padding: 2px 3px;
+  border-radius: 4px;
+  white-space: nowrap;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.14s ease, background 0.14s ease;
+}
+.crumb:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.crumb:last-child {
+  color: var(--on-panel);
+}
+.crumb-sep {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  opacity: 0.5;
+  flex: none;
+}
+.files-row.active {
+  background: var(--hover-strong);
+}
+
+/* 就地改名：Files 的标签 / 桌面图标下的名字都会临时变成这个 */
+.inline-rename {
+  width: 100%;
+  min-width: 0;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--field, rgba(127, 127, 127, 0.14));
+  color: var(--text);
+  font: inherit;
+  font-size: inherit;
+  line-height: 1.3;
+  outline: none;
+  text-align: center;
 }
 
 /* ---------- Editor ---------- */
@@ -1767,8 +1920,36 @@ textarea {
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 720px) {
+  /* 竖屏：不再隐藏桌面图标，改成顶部一排横向图标（会自动换行） */
   .desk-icons {
-    display: none;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 2px;
+    top: 38px;
+    left: 10px;
+    right: 10px;
+    z-index: 20;
+    pointer-events: none;
+  }
+  .desk-icon {
+    width: 62px;
+    padding: 7px 3px 5px;
+    gap: 4px;
+    pointer-events: auto;
+  }
+  .desk-icon svg {
+    width: 21px;
+    height: 21px;
+  }
+  .desk-icon span {
+    font-size: 9.5px;
+    line-height: 1.2;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .window {
     min-width: 0;

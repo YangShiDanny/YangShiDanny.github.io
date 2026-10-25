@@ -428,6 +428,57 @@ const TerminalApp = {
       if (e.target.tagName !== 'INPUT') input.focus();
     });
 
+    /* 右键：终端自己的菜单（清屏 / 复制 / 粘贴），不弹浏览器原生菜单 */
+    body.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const OS = window.LumeOS;
+      OS.closeMenus();
+      const picked = window.getSelection().toString();
+
+      OS.popMenu(e.clientX, e.clientY, {
+        title: 'Terminal',
+        sub: promptPath() + ' %',
+        items: [
+          {
+            ico: 'paste',
+            label: 'Paste',
+            hint: '⌘V',
+            run: () => {
+              input.focus();
+              OS.pasteInto(input);
+            }
+          },
+          {
+            ico: 'copy',
+            label: picked ? 'Copy Selection' : 'Copy',
+            hint: '⌘C',
+            run: () => {
+              if (picked && navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(picked).then(
+                  () => OS.toast('Copied ' + picked.length + ' characters'),
+                  () => OS.toast('Clipboard is blocked here')
+                );
+              } else if (!picked) {
+                OS.toast('Select some output first');
+              }
+            }
+          },
+          '|',
+          {
+            ico: 'refresh',
+            label: 'Clear Screen',
+            hint: '⌃L',
+            run: () => {
+              out.innerHTML = '';
+              input.focus();
+            }
+          }
+        ]
+      });
+    });
+
     greet();
     setTimeout(() => input.focus(), 60);
   }
@@ -440,68 +491,250 @@ const FilesApp = {
   id: 'files',
   name: 'Files',
   icon: 'files',
-  width: 660,
-  height: 440,
+  width: 700,
+  height: 460,
+  single: true,
 
-  mount(body) {
-    let cwd = LumeFS.HOME;
+  mount(body, win, opts = {}) {
+    const start = opts.path && LumeFS.isDir(opts.path) ? LumeFS.norm(opts.path) : LumeFS.HOME;
+
+    /* 浏览历史：hist[hi] 是当前目录，hi 后面是可以前进的部分 */
+    let hist = [start];
+    let hi = 0;
+    let selected = null;
 
     body.innerHTML = `
       <div class="files">
         <aside class="files-side">
           <p class="files-root">Places</p>
           <button class="files-nav" data-go="/home/lume">${ICON.home}<span>Home</span></button>
+          <button class="files-nav" data-go="/home/lume/Desktop">${ICON.desktop}<span>Desktop</span></button>
           <button class="files-nav" data-go="/home/lume/work">${ICON.folder}<span>Work</span></button>
           <button class="files-nav" data-go="/etc">${ICON.folder}<span>System</span></button>
           <button class="files-nav" data-go="/var/log">${ICON.folder}<span>Logs</span></button>
         </aside>
-        <div class="files-main"></div>
+        <div class="files-pane">
+          <div class="files-bar">
+            <button class="files-tool" type="button" data-act="back" aria-label="Back" title="Back">${ICON.back}</button>
+            <button class="files-tool" type="button" data-act="fwd" aria-label="Forward" title="Forward">${ICON.forward}</button>
+            <button class="files-tool" type="button" data-act="up" aria-label="Enclosing folder" title="Enclosing folder">${ICON.up}</button>
+            <div class="files-crumbs" id="files-crumbs"></div>
+            <button class="files-tool" type="button" data-act="new" aria-label="New item" title="New file or folder">${ICON.plus}</button>
+          </div>
+          <div class="files-main"></div>
+        </div>
       </div>`;
 
     const main = body.querySelector('.files-main');
+    const crumbsEl = body.querySelector('.files-crumbs');
     const navs = Array.from(body.querySelectorAll('.files-nav'));
+    const backBtn = body.querySelector('[data-act="back"]');
+    const fwdBtn = body.querySelector('[data-act="fwd"]');
+    const upBtn = body.querySelector('[data-act="up"]');
+
+    const cwd = () => hist[hi];
 
     const render = () => {
-      const items = LumeFS.list(cwd);
-      const crumbs = cwd.split('/').filter(Boolean);
+      /* 窗口已经关掉了就别再往脱离文档的节点里画 */
+      if (!body.isConnected) return;
 
-      main.innerHTML =
-        `<div class="files-crumbs"><b>lumeos</b>` +
-        crumbs.map((c) => `<span>/</span><span>${esc(c)}</span>`).join('') +
-        `</div>` +
-        (items.length
-          ? items
-              .map(
-                (i) => `
-            <button class="files-row" data-path="${esc(i.path)}" data-type="${i.type}">
+      /* 当前目录被删掉了（比如在终端里 rm -r）就退回父目录 */
+      if (!LumeFS.isDir(cwd())) {
+        const parent = LumeFS.parentOf(cwd());
+        if (parent && LumeFS.isDir(parent)) {
+          hist[hi] = parent;
+        } else {
+          hist = [LumeFS.HOME];
+          hi = 0;
+        }
+      }
+
+      const cur = cwd();
+      const items = LumeFS.list(cur);
+
+      let acc = '';
+      crumbsEl.innerHTML =
+        '<button class="crumb" type="button" data-go="/">lumeos</button>' +
+        cur
+          .split('/')
+          .filter(Boolean)
+          .map((part) => {
+            acc += '/' + part;
+            return (
+              '<span class="crumb-sep">/</span>' +
+              '<button class="crumb" type="button" data-go="' + esc(acc) + '">' + esc(part) + '</button>'
+            );
+          })
+          .join('');
+
+      main.innerHTML = items.length
+        ? items
+            .map(
+              (i) => `
+            <div class="files-row${i.path === selected ? ' active' : ''}" role="button" tabindex="0" data-path="${esc(i.path)}" data-type="${i.type}">
               ${i.type === 'dir' ? ICON.folder : ICON.file}
-              <span>${esc(i.name)}</span>
+              <span class="name">${esc(i.name)}</span>
               <span class="sz">${i.type === 'dir' ? '—' : fmtSize(LumeFS.size(i.path))}</span>
-            </button>`
-              )
-              .join('')
-          : `<div class="files-empty">this folder is empty</div>`);
+            </div>`
+            )
+            .join('')
+        : `<div class="files-empty">this folder is empty — right-click to make something</div>`;
 
-      navs.forEach((n) => n.classList.toggle('active', n.dataset.go === cwd));
+      backBtn.disabled = hi === 0;
+      fwdBtn.disabled = hi >= hist.length - 1;
+      upBtn.disabled = cur === '/';
+      navs.forEach((n) => n.classList.toggle('active', n.dataset.go === cur));
+      win.setTitle(LumeFS.baseOf(cur) === '/' ? 'Files' : LumeFS.baseOf(cur));
     };
 
+    const go = (path, mode) => {
+      const next = LumeFS.norm(path);
+      if (!LumeFS.isDir(next)) return;
+      if (next === cwd() && mode !== 'replace') {
+        render();
+        return;
+      }
+      if (mode === 'replace') {
+        hist[hi] = next;
+      } else {
+        hist = hist.slice(0, hi + 1);
+        hist.push(next);
+        hi = hist.length - 1;
+      }
+      selected = null;
+      render();
+    };
+
+    const openRow = (path, type) => {
+      if (type === 'dir' || LumeFS.isDir(path)) go(path);
+      else window.LumeOS.openApp('editor', { path: path });
+    };
+
+    /* --- 工具栏 --- */
+    body.querySelector('.files-bar').addEventListener('click', (e) => {
+      const tool = e.target.closest('.files-tool');
+      if (tool) {
+        const act = tool.dataset.act;
+        if (act === 'back' && hi > 0) {
+          hi -= 1;
+          selected = null;
+          render();
+        }
+        if (act === 'fwd' && hi < hist.length - 1) {
+          hi += 1;
+          selected = null;
+          render();
+        }
+        if (act === 'up' && cwd() !== '/') go(LumeFS.parentOf(cwd()));
+        if (act === 'new') {
+          const box = tool.getBoundingClientRect();
+          window.LumeOS.closeMenus();
+          areaMenu(box.left - 60, box.bottom + 6);
+        }
+        return;
+      }
+      const crumb = e.target.closest('.crumb');
+      if (crumb) go(crumb.dataset.go);
+    });
+
+    /* --- 文件行 --- */
     main.addEventListener('click', (e) => {
       const row = e.target.closest('.files-row');
       if (!row) return;
-      if (row.dataset.type === 'dir') {
-        cwd = row.dataset.path;
-        render();
-      } else {
-        window.LumeOS.openApp('editor', { path: row.dataset.path });
-      }
+      selected = row.dataset.path;
+      Array.from(main.querySelectorAll('.files-row')).forEach((r) => r.classList.toggle('active', r === row));
+      openRow(row.dataset.path, row.dataset.type);
+    });
+
+    main.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target.closest('.files-row');
+      if (!row) return;
+      e.preventDefault();
+      row.click();
     });
 
     body.querySelector('.files-side').addEventListener('click', (e) => {
       const nav = e.target.closest('.files-nav');
       if (!nav) return;
-      cwd = nav.dataset.go;
-      render();
+      go(nav.dataset.go);
     });
+
+    /* --- 右键：行菜单 / 空白处菜单。stopPropagation 让内核别再弹桌面菜单 --- */
+    const rowMenu = (x, y, path, type, row) => {
+      const isDir = type === 'dir';
+      const items = [
+        { ico: isDir ? 'files' : 'editor', label: 'Open', run: () => openRow(path, type) },
+        {
+          ico: 'rename',
+          label: 'Rename…',
+          run: () => window.LumeOS.inlineRename(row.querySelector('.name'), path, render)
+        }
+      ];
+      if (!isDir) items.push({ ico: 'duplicate', label: 'Duplicate', run: () => window.LumeOS.duplicate(path) });
+      items.push('|', {
+        ico: 'trash',
+        label: 'Move to Trash',
+        danger: true,
+        run: () => {
+          window.LumeOS.remove(path);
+          selected = null;
+        }
+      });
+
+      window.LumeOS.popMenu(x, y, {
+        title: LumeFS.baseOf(path),
+        sub: isDir ? 'Folder' : fmtSize(LumeFS.size(path)),
+        items: items
+      });
+    };
+
+    const areaMenu = (x, y) => {
+      const base = LumeFS.baseOf(cwd());
+      window.LumeOS.popMenu(x, y, {
+        title: base === '/' ? 'lumeos' : base,
+        sub: 'lume-fs · ' + cwd(),
+        items: [
+          { ico: 'newfile', label: 'New File', hint: '⌘⇧N', run: () => window.LumeOS.newItem(cwd(), 'file') },
+          { ico: 'newfolder', label: 'New Folder', run: () => window.LumeOS.newItem(cwd(), 'dir') },
+          '|',
+          { ico: 'refresh', label: 'Refresh', run: render },
+          {
+            ico: 'up',
+            label: 'Enclosing Folder',
+            hint: '↑',
+            run: () => {
+              if (cwd() !== '/') go(LumeFS.parentOf(cwd()));
+            }
+          }
+        ]
+      });
+    };
+
+    main.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.LumeOS.closeMenus();
+      const row = e.target.closest('.files-row');
+      if (row) {
+        selected = row.dataset.path;
+        render();
+        const fresh = main.querySelector('.files-row[data-path="' + CSS.escape(row.dataset.path) + '"]');
+        rowMenu(e.clientX, e.clientY, row.dataset.path, row.dataset.type, fresh || row);
+      } else {
+        areaMenu(e.clientX, e.clientY);
+      }
+    });
+
+    /* 侧边栏的空白处也给菜单，不然右键会漏到桌面 */
+    body.querySelector('.files-side').addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.LumeOS.closeMenus();
+      areaMenu(e.clientX, e.clientY);
+    });
+
+    win.navigate = (path) => go(path);
 
     window.addEventListener('lume:fs', render);
     render();
@@ -658,6 +891,48 @@ const EditorApp = {
         e.preventDefault();
         run();
       }
+    });
+
+    /* 右键菜单：运行 / 保存 + 剪贴板。自己接管，别漏给浏览器 */
+    area.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const OS = window.LumeOS;
+      OS.closeMenus();
+
+      const exec = (cmd) => () => {
+        area.focus();
+        try {
+          document.execCommand(cmd);
+        } catch (err) {
+          OS.toast('This browser blocked that action');
+        }
+      };
+
+      const items = [];
+      if (isLume) items.push({ ico: 'run', label: 'Run File', hint: '⌘⏎', run: run });
+      items.push({ ico: 'save', label: 'Save', hint: '⌘S', run: save });
+      items.push('|');
+      items.push({ ico: 'cut', label: 'Cut', hint: '⌘X', run: exec('cut') });
+      items.push({ ico: 'copy', label: 'Copy', hint: '⌘C', run: exec('copy') });
+      items.push({ ico: 'paste', label: 'Paste', hint: '⌘V', run: () => OS.pasteInto(area) });
+      items.push('|');
+      items.push({
+        ico: 'selectall',
+        label: 'Select All',
+        hint: '⌘A',
+        run: () => {
+          area.focus();
+          area.select();
+        }
+      });
+
+      OS.popMenu(e.clientX, e.clientY, {
+        title: path ? LumeFS.baseOf(path) : 'untitled',
+        sub: isLume ? 'lume source' : area.value.trim() ? 'text' : 'empty buffer',
+        items: items
+      });
     });
 
     body.querySelector('[data-act="save"]').addEventListener('click', save);

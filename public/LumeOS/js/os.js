@@ -23,6 +23,7 @@
     dockInner: $('#dock-inner'),
     dockPower: $('#dock-power'),
     mbApp: $('#mb-app'),
+    mbBack: $('#mb-back'),
     mbLogo: $('#mb-logo'),
     mbClock: $('#mb-clock'),
     mbSearch: $('#mb-search'),
@@ -394,6 +395,21 @@
 
     const key = app.id + (opts.path ? ':' + opts.path : '');
 
+    /* 单例应用（Files）：已经有窗口就复用，直接在里面跳目录，不再开第二个 */
+    if (app.single) {
+      const found = Array.from(wins.entries()).find(([, w]) => w.app.id === app.id);
+      if (found) {
+        const w = found[1];
+        if (w.minimized) {
+          w.minimized = false;
+          w.el.style.display = '';
+        }
+        focusWin(found[0]);
+        if (opts.path && w.navigate) w.navigate(opts.path);
+        return found[0];
+      }
+    }
+
     if (wins.has(key) && !opts.forceNew) {
       const win = wins.get(key);
       if (win.minimized) {
@@ -509,21 +525,52 @@
   }
 
   /* -------------------------------------------------------- */
-  /*  桌面图标                                                  */
+  /*  桌面图标：应用快捷方式 + /home/lume/Desktop 里的真实文件     */
   /* -------------------------------------------------------- */
+  function makeDeskIcon(svg, label, meta) {
+    /* 用 div 而不是 button：右键改名时要在里面塞 input，button 里放 input 是非法的 */
+    const btn = document.createElement('div');
+    btn.className = 'desk-icon';
+    btn.setAttribute('role', 'button');
+    btn.tabIndex = 0;
+    if (meta.app) btn.dataset.app = meta.app;
+    if (meta.path) {
+      btn.dataset.path = meta.path;
+      btn.dataset.type = meta.type;
+    }
+    btn.innerHTML = svg + '<span></span>';
+    btn.querySelector('span').textContent = label;
+    btn.title = meta.app ? APPS[meta.app].name : meta.path;
+    return btn;
+  }
+
   function buildDeskIcons() {
+    const frag = document.createDocumentFragment();
+
     [
       ['terminal', 'Terminal'],
       ['files', 'Files'],
       ['about', 'About']
     ].forEach(([id, label]) => {
-      const btn = document.createElement('button');
-      btn.className = 'desk-icon';
-      btn.type = 'button';
-      btn.innerHTML = ICON[APPS[id].icon] + '<span>' + label + '</span>';
-      btn.addEventListener('click', () => openApp(id));
-      el.deskIcons.appendChild(btn);
+      frag.appendChild(makeDeskIcon(ICON[APPS[id].icon], label, { app: id }));
     });
+
+    LumeFS.list(LumeFS.DESKTOP).forEach((item) => {
+      frag.appendChild(
+        makeDeskIcon(item.type === 'dir' ? ICON.folder : ICON.file, item.name, {
+          path: item.path,
+          type: item.type
+        })
+      );
+    });
+
+    el.deskIcons.innerHTML = '';
+    el.deskIcons.appendChild(frag);
+  }
+
+  function openPath(path, type) {
+    if (type === 'dir' || LumeFS.isDir(path)) openApp('files', { path: path });
+    else openApp('editor', { path: path });
   }
 
   /* -------------------------------------------------------- */
@@ -535,12 +582,21 @@
     el.mbLogo.classList.remove('open');
   }
 
-  function openSysMenu() {
-    const rect = el.mbLogo.getBoundingClientRect();
+  function openSysMenu(x, y) {
     el.sysMenu.hidden = false;
+    el.mbLogo.classList.add('open');
+
+    if (typeof x === 'number' && typeof y === 'number') {
+      /* 从菜单栏任意位置右键唤起：贴着鼠标放，别出屏 */
+      const box = el.sysMenu.getBoundingClientRect();
+      el.sysMenu.style.left = Math.round(Math.min(Math.max(8, x), innerWidth - box.width - 8)) + 'px';
+      el.sysMenu.style.top = Math.round(Math.min(y, innerHeight - box.height - 8)) + 'px';
+      return;
+    }
+
+    const rect = el.mbLogo.getBoundingClientRect();
     el.sysMenu.style.left = Math.round(rect.left) + 'px';
     el.sysMenu.style.top = Math.round(rect.bottom + 6) + 'px';
-    el.mbLogo.classList.add('open');
   }
 
   /* 右键菜单：与系统菜单共用一套行结构（图标 / 标签 / 提示），
@@ -600,6 +656,9 @@
       title: 'Desktop',
       sub: `lume 1.0 · ${wins.size} window${wins.size === 1 ? '' : 's'}`,
       items: [
+        { ico: 'newfile', label: 'New File', hint: '⌘⇧N', run: () => newItem(LumeFS.DESKTOP, 'file') },
+        { ico: 'newfolder', label: 'New Folder', run: () => newItem(LumeFS.DESKTOP, 'dir') },
+        '|',
         { ico: 'search', label: 'Spotlight…', hint: '⌘K', run: openSpot },
         '|',
         { ico: 'terminal', label: 'Terminal', dot: running.has('terminal'), run: launch('terminal') },
@@ -637,6 +696,198 @@
         { ico: 'max', label: win.max ? 'Restore' : 'Zoom', run: () => toggleMax(win) },
         '|',
         { ico: 'close', label: 'Close Window', hint: '⌥W', danger: true, run: () => closeWin(win.key) }
+      ]
+    });
+  }
+
+  /* -------------------------------------------------------- */
+  /*  文件操作：桌面和 Files 共用同一套                          */
+  /* -------------------------------------------------------- */
+  function newItem(dir, kind) {
+    const base = kind === 'dir' ? 'untitled folder' : 'untitled.txt';
+    const path = LumeFS.unique(dir, base);
+    const ok = kind === 'dir' ? LumeFS.mkdir(path) : LumeFS.write(path, '');
+    if (!ok) {
+      toast('Could not create ' + base + ' in ' + LumeFS.baseOf(dir));
+      return null;
+    }
+    toast((kind === 'dir' ? 'New folder · ' : 'New file · ') + LumeFS.baseOf(path));
+    return path;
+  }
+
+  function duplicateItem(path) {
+    if (!LumeFS.exists(path) || LumeFS.isDir(path)) return;
+    const name = LumeFS.baseOf(path);
+    const dot = name.lastIndexOf('.');
+    const copyName = dot > 0 ? name.slice(0, dot) + ' copy' + name.slice(dot) : name + ' copy';
+    const dest = LumeFS.unique(LumeFS.parentOf(path), copyName);
+    if (LumeFS.write(dest, LumeFS.read(path) || '')) toast('Duplicated as ' + LumeFS.baseOf(dest));
+  }
+
+  /* 桌面的位置由内核约定，改名或删掉会让桌面图标无处可取 */
+  const PROTECTED = ['/', LumeFS.HOME, LumeFS.DESKTOP];
+  const isProtected = (path) => PROTECTED.indexOf(LumeFS.norm(path)) >= 0;
+
+  function deleteItem(path) {
+    const name = LumeFS.baseOf(path);
+    if (isProtected(path)) return toast(name === '/' ? 'Not this one' : name + ' is part of the system');
+    if (!LumeFS.remove(path)) return toast('Could not delete ' + name);
+    toast('Moved to trash · ' + name);
+  }
+
+  /** 就地改名：label 原地换成输入框，回车提交、Esc 取消、失焦按提交算 */
+  function inlineRename(labelEl, path, done) {
+    if (!labelEl || !labelEl.parentNode) return;
+    if (isProtected(path)) {
+      toast('That folder is part of the system');
+      return;
+    }
+    const input = document.createElement('input');
+    input.className = 'inline-rename';
+    input.value = LumeFS.baseOf(path);
+    input.spellcheck = false;
+    input.setAttribute('aria-label', 'Rename');
+    labelEl.replaceWith(input);
+
+    let settled = false;
+    const finish = (commit) => {
+      if (settled) return;
+      settled = true;
+      const value = input.value;
+      if (!commit || !value.trim() || value.trim() === LumeFS.baseOf(path)) return done(false);
+      if (LumeFS.rename(path, value)) done(true);
+      else {
+        toast('"' + value.trim() + '" already exists here');
+        done(false);
+      }
+    };
+
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finish(true);
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener('blur', () => finish(true));
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 0);
+  }
+
+  function openDeskIconMenu(x, y, btn) {
+    const path = btn.dataset.path;
+
+    if (!path) {
+      const app = btn.dataset.app;
+      popMenu(x, y, {
+        title: APPS[app].name,
+        sub: 'Application',
+        items: [
+          { ico: APPS[app].icon, label: 'Open', run: () => openApp(app) },
+          '|',
+          { ico: 'search', label: 'Find with Spotlight', hint: '⌘K', run: openSpot }
+        ]
+      });
+      return;
+    }
+
+    const isDir = btn.dataset.type === 'dir';
+    const items = [
+      { ico: isDir ? 'files' : 'editor', label: 'Open', run: () => openPath(path, btn.dataset.type) },
+      { ico: 'files', label: 'Show in Files', run: () => openApp('files', { path: LumeFS.parentOf(path) }) },
+      '|',
+      {
+        ico: 'rename',
+        label: 'Rename…',
+        run: () => inlineRename(btn.querySelector('span'), path, () => buildDeskIcons())
+      }
+    ];
+    if (!isDir) items.push({ ico: 'duplicate', label: 'Duplicate', run: () => duplicateItem(path) });
+    items.push('|', { ico: 'trash', label: 'Move to Trash', danger: true, run: () => deleteItem(path) });
+
+    popMenu(x, y, {
+      title: LumeFS.baseOf(path),
+      sub: (isDir ? 'Folder' : fmtSize(LumeFS.size(path))) + ' · Desktop',
+      items: items
+    });
+  }
+
+  function openDockMenu(x, y, item) {
+    const id = item.dataset.app;
+    const running = !!Array.from(wins.values()).find((w) => w.app.id === id);
+    const items = [{ ico: APPS[id].icon, label: 'Open', run: () => openApp(id) }];
+    if (running) {
+      items.push('|', {
+        ico: 'close',
+        label: 'Close Window',
+        danger: true,
+        run: () => {
+          const found = Array.from(wins.entries()).find(([, w]) => w.app.id === id);
+          if (found) closeWin(found[0]);
+        }
+      });
+    }
+    popMenu(x, y, { title: APPS[id].name, sub: running ? 'Running' : 'Application', items: items });
+  }
+
+  /* 把剪贴板内容塞进输入框；浏览器不给读就提示用 ⌘V */
+  function pasteInto(field) {
+    field.focus();
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      toast('Press ⌘V instead');
+      return;
+    }
+    navigator.clipboard.readText().then(
+      (text) => {
+        if (!text) return;
+        const a = field.selectionStart;
+        const b = field.selectionEnd;
+        field.setSelectionRange(a, b);
+        if (!document.execCommand('insertText', false, text)) {
+          const v = field.value;
+          field.value = v.slice(0, a) + text + v.slice(b);
+          field.setSelectionRange(a + text.length, a + text.length);
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      },
+      () => toast('Clipboard is not readable here — press ⌘V instead')
+    );
+  }
+
+  /* 文字区域的右键菜单：以前这里会弹浏览器原生菜单 */
+  function openEditMenu(x, y, field) {
+    const run = (cmd) => () => {
+      field.focus();
+      try {
+        document.execCommand(cmd);
+      } catch (e) {
+        toast('This browser blocked that action');
+      }
+    };
+
+    popMenu(x, y, {
+      title: 'Edit',
+      sub: field.tagName.toLowerCase() === 'textarea' ? 'text editor' : 'text field',
+      items: [
+        { ico: 'cut', label: 'Cut', hint: '⌘X', run: run('cut') },
+        { ico: 'copy', label: 'Copy', hint: '⌘C', run: run('copy') },
+        { ico: 'paste', label: 'Paste', hint: '⌘V', run: () => pasteInto(field) },
+        '|',
+        {
+          ico: 'selectall',
+          label: 'Select All',
+          hint: '⌘A',
+          run: () => {
+            field.focus();
+            field.select();
+          }
+        }
       ]
     });
   }
@@ -854,6 +1105,28 @@
   /* -------------------------------------------------------- */
   /*  事件绑定                                                  */
   /* -------------------------------------------------------- */
+  el.mbBack.addEventListener('click', () => {
+    location.href = '/';
+  });
+
+  el.deskIcons.addEventListener('click', (e) => {
+    const btn = e.target.closest('.desk-icon');
+    if (!btn) return;
+    if (btn.dataset.app) return openApp(btn.dataset.app);
+    if (btn.dataset.path) return openPath(btn.dataset.path, btn.dataset.type);
+  });
+
+  el.deskIcons.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const btn = e.target.closest('.desk-icon');
+    if (!btn) return;
+    e.preventDefault();
+    btn.click();
+  });
+
+  /* 文件系统变化 → 桌面图标跟着变（新建/改名/删除都算） */
+  window.addEventListener('lume:fs', () => buildDeskIcons());
+
   el.mbLogo.addEventListener('click', (e) => {
     e.stopPropagation();
     if (el.sysMenu.hidden) openSysMenu();
@@ -885,23 +1158,62 @@
     if (!e.target.closest('#ctx-menu')) el.ctxMenu.hidden = true;
   });
 
-  el.desktop.addEventListener('contextmenu', (e) => {
+  /* 全站接管右键：任何地方都不再弹浏览器原生菜单。
+     应用内部（Files / Editor / Terminal）会自己 stopPropagation，
+     所以到这里的只剩桌面、标题栏、Dock、菜单栏和纯文字区。 */
+  document.addEventListener('contextmenu', (e) => {
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+
     const t = e.target;
+
+    /* 已经弹出来的菜单上再点右键：不重复弹，也不穿越到底下的桌面 */
+    if (t.closest('.menu, #spotlight, #veil')) return;
+
     const winEl = t.closest('.window');
 
     if (winEl) {
-      /* 只在标题栏给窗口菜单；窗口正文保留原生菜单，复制/粘贴还要用 */
-      if (!t.closest('.win-titlebar')) return;
       const key = Array.from(wins.keys()).find((k) => wins.get(k).el === winEl);
-      if (!key) return;
-      e.preventDefault();
+      const win = key && wins.get(key);
+
+      if (t.closest('.win-titlebar')) {
+        closeMenus();
+        if (win) openWinMenu(e.clientX, e.clientY, win);
+        return;
+      }
+      /* 正文里的输入框 / 文本区给编辑菜单 */
+      const field = t.closest('input:not([type="hidden"]), textarea');
+      if (field && !field.readOnly && !field.disabled) {
+        closeMenus();
+        openEditMenu(e.clientX, e.clientY, field);
+        return;
+      }
+      /* 其余正文还没自带菜单——给一个通用的窗口菜单，总比原生菜单好 */
       closeMenus();
-      openWinMenu(e.clientX, e.clientY, wins.get(key));
+      if (win) openWinMenu(e.clientX, e.clientY, win);
       return;
     }
 
-    if (t.closest('.dock, .menubar')) return;
-    e.preventDefault();
+    const deskIcon = t.closest('.desk-icon');
+    if (deskIcon) {
+      closeMenus();
+      openDeskIconMenu(e.clientX, e.clientY, deskIcon);
+      return;
+    }
+
+    const dockItem = t.closest('.dock-item[data-app]');
+    if (dockItem) {
+      closeMenus();
+      openDockMenu(e.clientX, e.clientY, dockItem);
+      return;
+    }
+
+    if (t.closest('.menubar')) {
+      openSysMenu(e.clientX, e.clientY);
+      return;
+    }
+    if (t.closest('.dock')) return;
+
     closeMenus();
     openCtxMenu(e.clientX, e.clientY);
   });
@@ -959,6 +1271,10 @@
       e.preventDefault();
       lockScreen();
     }
+    if (mod && e.shiftKey && e.key.toLowerCase() === 'n') {
+      e.preventDefault();
+      newItem(LumeFS.DESKTOP, 'file');
+    }
   });
 
   /* -------------------------------------------------------- */
@@ -1003,6 +1319,16 @@
     setAccent: setAccent,
     systemInfo: systemInfo,
     uptimeText: uptimeText,
-    redrawWallpaper: wall.redraw
+    redrawWallpaper: wall.redraw,
+    /* 给应用复用的系统能力：右键菜单、文件操作、就地改名 */
+    popMenu: popMenu,
+    closeMenus: closeMenus,
+    newItem: newItem,
+    duplicate: duplicateItem,
+    remove: deleteItem,
+    inlineRename: inlineRename,
+    openPath: openPath,
+    pasteInto: pasteInto,
+    deskDir: LumeFS.DESKTOP
   };
 })();

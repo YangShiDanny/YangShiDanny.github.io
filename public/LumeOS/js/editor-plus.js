@@ -423,13 +423,26 @@
         return;
       }
 
-      /* 退格：成对符号一起删 */
+      /* 退格：成对符号一起删；缩进里一次退一个制表位 */
       if (e.key === 'Backspace' && !mod && start === end && start > 0) {
         const prev = value[start - 1];
         const next = value[start];
         if (PAIRS[prev] === next && (OPENERS.indexOf(prev) >= 0)) {
           e.preventDefault();
           replaceRange(start - 1, start + 1, '', start - 1);
+          return;
+        }
+
+        /* 光标停在纯缩进里：删掉整级（4 空格就一次退 4 个），和 VSCode 一致 */
+        const ls = lineStart(value, start);
+        const before = value.slice(ls, start);
+        if (before && /^[ \t]+$/.test(before)) {
+          let cut = 1;
+          if (unit !== '\t' && before.indexOf('\t') === -1) {
+            cut = before.length % unit.length || Math.min(unit.length, before.length);
+          }
+          e.preventDefault();
+          replaceRange(start - cut, start, '', start - cut);
           return;
         }
         return;

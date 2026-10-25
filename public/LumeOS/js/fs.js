@@ -5,13 +5,19 @@
    ============================================================ */
 
 const LumeFS = (function () {
-  /* v4：README 补上编辑器用法（自动缩进/配对/补全/Run），旧 v3 编辑记录丢弃 */
-  const KEY = 'lume.fs.v4';
+  /* v5：新增 /home/lume/Desktop（桌面图标 = 这里的真实内容），
+     持久化方式从「只存内容」改成「目录 + 文件 + 删除清单」，
+     这样新建 / 重命名 / 删除在刷新后都还在。旧 v4 记录自动迁移。 */
+  const KEY = 'lume.fs.v5';
+
+  const HOME = '/home/lume';
+  const DESKTOP = '/home/lume/Desktop';
 
   const SEED = {
     '/': { type: 'dir' },
     '/home': { type: 'dir' },
     '/home/lume': { type: 'dir' },
+    '/home/lume/Desktop': { type: 'dir' },
     '/home/lume/work': { type: 'dir' },
     '/etc': { type: 'dir' },
     '/var': { type: 'dir' },
@@ -42,15 +48,19 @@ to feel like a real machine for about thirty seconds.
 5. Open work/hello.lume — .lume files get syntax colour in the editor.
 6. Hit Run in the editor toolbar (or Cmd+Enter) — output lands under the code.
 7. In Terminal: \`cd work\`, then \`lume run hello.lume\`; \`lume build hello.lume\` writes hello.c.
-8. Right-click the desktop, or a window's title bar.
+8. Right-click anywhere. There is no browser menu left in this machine.
+9. Right-click the desktop → New File. It appears as a real icon on the wallpaper.
+10. In Files, use the ← → ↑ buttons or click a crumb in the path.
 
 ## In the editor
 
 - Enter keeps the indent, adds one level after \`{\`, and \`}\` dedents itself.
+- Backspace inside the indent eats a whole level — four spaces at a time.
 - \`(\` \`[\` \`{\` \`"\` \`'\` close themselves; the closing key skips over.
 - Tab / Shift+Tab indent or dedent the selected lines.
 - Cmd+/ comments the selection.
 - Typing a name pops a suggestion list — Enter or Tab takes it, Esc drops it.
+- Right-click for Run, Save, Cut, Copy, Paste.
 - The chip next to the filename tells you what kind of file you have open.
 `
     },
@@ -225,22 +235,55 @@ uptime      = since you opened this tab
   const data = {};
   for (const key of Object.keys(SEED)) data[key] = Object.assign({}, SEED[key]);
 
-  // 恢复上次编辑过的文件内容
+  /* 从 localStorage 恢复：dirs 补目录、gone 删掉用户删过的种子文件、files 覆盖内容。
+     旧格式（v4 及更早）是一个扁平的 {路径: 内容}，这里兼容着读。 */
   try {
-    const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
-    for (const path of Object.keys(saved)) {
-      if (data[path] && data[path].type === 'file') data[path].content = saved[path];
+    const raw = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (raw && typeof raw === 'object') {
+      const files = raw.files || raw;
+      const dirs = Array.isArray(raw.dirs) ? raw.dirs.slice() : [];
+
+      dirs
+        .sort((a, b) => a.split('/').length - b.split('/').length)
+        .forEach((p) => {
+          const n = norm(p);
+          const parent = parentOf(n);
+          if (!data[n] && parent && data[parent] && data[parent].type === 'dir') {
+            data[n] = { type: 'dir' };
+          }
+        });
+
+      (Array.isArray(raw.gone) ? raw.gone : []).forEach((p) => {
+        const n = norm(p);
+        if (SEED[n] && n !== '/' && !files[n]) delete data[n];
+      });
+
+      for (const path of Object.keys(files)) {
+        const n = norm(path);
+        const parent = parentOf(n);
+        if (parent && data[parent] && data[parent].type === 'dir' && !(data[n] && data[n].type === 'dir')) {
+          data[n] = { type: 'file', content: String(files[path]) };
+        }
+      }
     }
   } catch (e) {}
 
   function save() {
     try {
-      const out = {};
+      const files = {};
+      const dirs = [];
       for (const path of Object.keys(data)) {
-        if (data[path].type === 'file') out[path] = data[path].content;
+        if (path === '/') continue;
+        if (data[path].type === 'dir') dirs.push(path);
+        else files[path] = data[path].content;
       }
-      localStorage.setItem(KEY, JSON.stringify(out));
+      const gone = Object.keys(SEED).filter((p) => p !== '/' && !data[p]);
+      localStorage.setItem(KEY, JSON.stringify({ files: files, dirs: dirs, gone: gone }));
     } catch (e) {}
+  }
+
+  function emit(path) {
+    window.dispatchEvent(new CustomEvent('lume:fs', { detail: { path: path } }));
   }
 
   function norm(path) {
@@ -314,8 +357,75 @@ uptime      = since you opened this tab
     }
     data[n].content = String(content);
     save();
-    window.dispatchEvent(new CustomEvent('lume:fs', { detail: { path: n } }));
+    emit(n);
     return true;
+  }
+
+  /** 新建目录；父目录必须存在 */
+  function mkdir(path) {
+    const n = norm(path);
+    if (n === '/' || data[n]) return false;
+    const parent = parentOf(n);
+    if (!parent || !data[parent] || data[parent].type !== 'dir') return false;
+    data[n] = { type: 'dir' };
+    save();
+    emit(n);
+    return true;
+  }
+
+  /** 在同一目录里改名（目录会带着整棵子树一起走） */
+  function rename(path, name) {
+    const n = norm(path);
+    const node = data[n];
+    if (!node || n === '/') return false;
+
+    const clean = String(name == null ? '' : name).trim().replace(/[\\/]/g, '');
+    if (!clean || clean === '.' || clean === '..') return false;
+
+    const parent = parentOf(n);
+    const next = norm((parent === '/' ? '' : parent) + '/' + clean);
+    if (next === n) return true;
+    if (data[next]) return false;
+
+    (function move(from, to) {
+      const children = Object.keys(data).filter((k) => parentOf(k) === from);
+      data[to] = data[from];
+      delete data[from];
+      children.forEach((k) => move(k, to + k.slice(from.length)));
+    })(n, next);
+
+    save();
+    emit(next);
+    return true;
+  }
+
+  /** 删除文件或目录（目录递归） */
+  function remove(path) {
+    const n = norm(path);
+    if (n === '/' || !data[n]) return false;
+    (function drop(p) {
+      Object.keys(data)
+        .filter((k) => parentOf(k) === p)
+        .forEach(drop);
+      delete data[p];
+    })(n);
+    save();
+    emit(parentOf(n) || '/');
+    return true;
+  }
+
+  /** 在 dir 里找一个不冲突的名字：foo.txt → foo 2.txt → foo 3.txt */
+  function unique(dir, base) {
+    const d = norm(dir);
+    if (!exists(d + '/' + base)) return d + '/' + base;
+    const dot = base.lastIndexOf('.');
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    const ext = dot > 0 ? base.slice(dot) : '';
+    for (let i = 2; i < 500; i++) {
+      const candidate = d + '/' + stem + ' ' + i + ext;
+      if (!exists(candidate)) return candidate;
+    }
+    return d + '/' + stem + '-' + Date.now() + ext;
   }
 
   function size(path) {
@@ -324,5 +434,22 @@ uptime      = since you opened this tab
     return new Blob([c]).size;
   }
 
-  return { norm, parentOf, baseOf, resolve, exists, isDir, list, read, write, size, HOME: '/home/lume' };
+  return {
+    norm,
+    parentOf,
+    baseOf,
+    resolve,
+    exists,
+    isDir,
+    list,
+    read,
+    write,
+    mkdir,
+    rename,
+    remove,
+    unique,
+    size,
+    HOME: HOME,
+    DESKTOP: DESKTOP
+  };
 })();
