@@ -5,8 +5,8 @@
    ============================================================ */
 
 const LumeFS = (function () {
-  /* v2：把 lume.lang 改名成 hello.lume（.lume 是这门语言真正的后缀） */
-  const KEY = 'lume.fs.v2';
+  /* v3：hello.lume 换成可被浏览器 VM 真正跑通的版本，另加 syntax.lume */
+  const KEY = 'lume.fs.v3';
 
   const SEED = {
     '/': { type: 'dir' },
@@ -40,7 +40,8 @@ to feel like a real machine for about thirty seconds.
 3. Open Terminal and run \`neofetch\`.
 4. Toggle the theme from the menu bar.
 5. Open work/hello.lume — .lume files get syntax colour in the editor.
-6. Right-click the desktop.
+6. Run it: \`cd work\`, then \`lume run hello.lume\`; \`lume build hello.lume\` writes hello.c.
+7. Right-click the desktop.
 `
     },
 
@@ -64,9 +65,9 @@ and nobody will ever notice it. that is the job.
     '/home/lume/work/hello.lume': {
       type: 'file',
       content: `// hello.lume — 这台机器就是以它命名的
-// 语法全部取自 LANGUAGE/lume 的真实用例，不是编的
+// Terminal 里：cd work，然后 lume run hello.lume
+// 想看生成物：lume build hello.lume，会写出 hello.c
 
-// 纯函数：编译器会证明出 const，打出 __attribute__((const))
 fn sq(x: int) -> int {
     return x * x
 }
@@ -75,13 +76,56 @@ fn even(x: int) -> bool {
     return x % 2 == 0
 }
 
-// 管道融合：三段 |> 被编成单个 for 循环，中间数组不上堆
-fn squares() -> [int] {
-    xs := [1, 2, 3, 4, 5]
-    return xs |> map(sq) |> filter(even)
+fn dist(ax: float, ay: float, bx: float, by: float) -> float {
+    dx := ax - bx
+    dy := ay - by
+    return sqrt(dx * dx + dy * dy)
 }
 
-// 结构体 + 方法（字段直接裸写，不用 self.x）
+fn main() {
+    name := "lume"
+
+    // 插值里能放表达式
+    say("hello, {name} — 3^2 = {sq(3)}")
+
+    // for 走范围，0..n 左闭右开
+    total: int = 0
+    for i in 0..10 {
+        if even(i) {
+            total += sq(i)
+        }
+    }
+    say("sum of squares of evens under 10 = {total}")
+
+    // 数组 + 下标 + len()
+    xs := [3, 1, 4, 1, 5, 9, 2, 6]
+    best := xs[0]
+    for i in 1..xs.len() {
+        if xs[i] > best {
+            best = xs[i]
+        }
+    }
+    say("{xs.len()} numbers, max = {best}")
+
+    say("distance = {dist(0.0, 0.0, 3.0, 4.0)}")
+
+    // while 照常
+    n := 27
+    steps := 0
+    while n != 1 {
+        if n % 2 == 0 { n = n / 2 } else { n = 3 * n + 1 }
+        steps += 1
+    }
+    say("collatz(27) = {steps} steps")
+}
+`
+    },
+
+    '/home/lume/work/syntax.lume': {
+      type: 'file',
+      content: `// syntax.lume — 真编译器的其余语法，浏览器 VM 只吃其中一部分
+// 这个文件主要拿来看高亮；run 它会被明确拒绝
+
 struct Point {
     x: float
     y: float
@@ -91,14 +135,12 @@ struct Point {
     }
 }
 
-// 枚举：C 风格无载荷，显式值之后自动 +1
 enum Mode {
     Fast = 0
     Safe = 10
     Cold
 }
 
-// 装饰器 + 并行归约
 @fastmath
 fn total(xs: [int], n: int) -> int {
     acc: int = 0
@@ -108,13 +150,14 @@ fn total(xs: [int], n: int) -> int {
     return acc
 }
 
-fn main() {
-    name := "lume"
+// 管道会融合成单个 for 循环，见 src/codegen/pipe.rs
+fn evens(xs: [int]) -> [int] {
+    return xs |> map(sq) |> filter(even)
+}
 
-    // 插值里能放表达式，也能再嵌一层字符串
-    say("hello, {name} — {squares().len()} evens")
-    say("mode = {Mode.Safe}  hex = {0x1f4}  rune = {'a'}")
-    say("verdict: {1 < 2 and not false}")
+fn fib(n: int) -> int {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
 }
 `
     },
@@ -253,7 +296,12 @@ uptime      = since you opened this tab
 
   function write(path, content) {
     const n = norm(path);
-    if (!data[n] || data[n].type !== 'file') return false;
+    if (data[n] && data[n].type === 'dir') return false;
+    if (!data[n]) {
+      const parent = parentOf(n);
+      if (!parent || !data[parent] || data[parent].type !== 'dir') return false;
+      data[n] = { type: 'file', content: '' };
+    }
     data[n].content = String(content);
     save();
     window.dispatchEvent(new CustomEvent('lume:fs', { detail: { path: n } }));

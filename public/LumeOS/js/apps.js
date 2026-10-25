@@ -78,6 +78,7 @@ const TerminalApp = {
           ['cat <file>', 'print a file'],
           ['pwd', 'print working directory'],
           ['open <app>', 'launch an app (try: files, editor, about)'],
+          ['lume <run|build> <file>', 'compile a .lume file in the browser'],
           ['neofetch', 'system information'],
           ['theme <dark|light>', 'switch appearance'],
           ['wall <stars|grid|plain>', 'change wallpaper'],
@@ -138,6 +139,91 @@ const TerminalApp = {
           return;
         }
         print(esc(content));
+      },
+
+      lume(args) {
+        const sub = (args[0] || '').toLowerCase();
+
+        if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
+          printDim(`lume ${window.LumeVM ? LumeVM.version : '0.2.0'}  ·  in-browser subset`);
+          print('');
+          print(`  <span class="u">${pad('lume run <file>', 22)}</span><span class="dim">解释执行，打印 say 的输出</span>`);
+          print(`  <span class="u">${pad('lume build <file>', 22)}</span><span class="dim">生成 &lt;stem&gt;.c 写进工作目录</span>`);
+          print(`  <span class="u">${pad('lume help', 22)}</span><span class="dim">this list</span>`);
+          print('');
+          printDim('浏览器里没有 clang，run 走的是同一棵 AST 的求值器；');
+          printDim('要真的编译成可执行文件，用仓库里的 cargo：');
+          print(`  <span class="u">cargo run -- run  main.lume</span>`);
+          print(`  <span class="u">cargo run -- build main.lume</span>`);
+          print('');
+          return;
+        }
+
+        if (!window.LumeVM) {
+          printDim('lume: vm module not loaded');
+          return;
+        }
+
+        const file = args[1];
+        if (!file) {
+          printDim(`usage: lume ${sub} <file.lume>`);
+          return;
+        }
+
+        const target = LumeFS.resolve(cwd, file);
+        const src = LumeFS.read(target);
+        if (src == null) {
+          printDim(`lume: ${file}: no such file`);
+          return;
+        }
+
+        const base = LumeFS.baseOf(target);
+
+        if (sub === 'run') {
+          const t0 = performance.now();
+          const res = LumeVM.run(src, { name: base });
+          const ms = performance.now() - t0;
+
+          if (!res.ok) {
+            print(`<span class="err">${esc(res.message)}</span>`);
+            return;
+          }
+
+          print(
+            `<span class="dim">lex</span> ${res.tokens} tokens   ` +
+              `<span class="dim">parse</span> ${res.fns} fn   ` +
+              `<span class="dim">vm</span> ${ms.toFixed(1)} ms`
+          );
+          print('');
+          res.output.forEach((line) => print(line ? esc(line) : '&nbsp;'));
+          print('');
+          return;
+        }
+
+        if (sub === 'build') {
+          const res = LumeVM.build(src, { name: base });
+          if (!res.ok) {
+            print(`<span class="err">${esc(res.message)}</span>`);
+            return;
+          }
+          const outPath = target.replace(/\.lume$/i, '.c');
+          const wrote = LumeFS.write(outPath, res.c);
+          print(
+            `<span class="dim">lex</span> ${res.tokens} tokens   ` +
+              `<span class="dim">parse</span> ${res.fns} fn   ` +
+              `<span class="dim">codegen</span> ${res.lines} lines`
+          );
+          if (wrote) {
+            print(`<span class="dim">wrote</span> ${esc(outPath)}`);
+            printDim(`看它：Files 里打开 ${LumeFS.baseOf(outPath)}，或 cat ${LumeFS.baseOf(outPath)}`);
+          } else {
+            printDim('写文件失败');
+          }
+          print('');
+          return;
+        }
+
+        printDim(`lume: unknown subcommand '${sub}' — try: lume help`);
       },
 
       open(args) {
