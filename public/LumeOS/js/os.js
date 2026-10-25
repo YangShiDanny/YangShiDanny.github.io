@@ -420,6 +420,25 @@
       return key;
     }
 
+    /* Dock / 菜单 / Spotlight 启动时不带 path：只要这个应用已有窗口
+       （哪怕当初是带 path 开的，key 对不上），就还原并聚焦它，
+       而不是再开一个一模一样的新窗口 —— 最小化后点 Dock 尤其明显 */
+    if (!opts.forceNew && !opts.path) {
+      let foundKey = null;
+      wins.forEach((w, k) => {
+        if (w.app.id === app.id) foundKey = k;
+      });
+      if (foundKey) {
+        const w = wins.get(foundKey);
+        if (w.minimized) {
+          w.minimized = false;
+          w.el.style.display = '';
+        }
+        focusWin(foundKey);
+        return foundKey;
+      }
+    }
+
     const area = el.windows.getBoundingClientRect();
     const narrow = area.width < 720;
     const width = narrow ? area.width - 16 : Math.min(app.width, area.width - 48);
@@ -478,6 +497,19 @@
         if (act === 'min') {
           win.minimized = true;
           node.style.display = 'none';
+          /* 最小化的是当前焦点窗口时，把焦点交给剩下最上面那个可见窗口 */
+          if (focusedKey === key) {
+            let pick = null;
+            wins.forEach((w, k) => {
+              if (!w.minimized) pick = k;
+            });
+            if (pick) focusWin(pick);
+            else {
+              focusedKey = null;
+              wins.forEach((w) => w.el.classList.remove('focused'));
+              el.mbApp.textContent = 'LumeOS';
+            }
+          }
         }
       });
     });

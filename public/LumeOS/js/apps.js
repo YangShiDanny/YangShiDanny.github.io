@@ -996,6 +996,12 @@ const SettingsApp = {
         <section class="set-group">
           <p class="set-label">System</p>
           <div class="set-row">
+            <div><span class="name">Chinese IME</span><span class="desc">Type pinyin in any text field. Tap Shift alone to switch 中 / EN.</span></div>
+            <div class="seg" data-set="ime">
+              <button data-v="cn">中</button><button data-v="en">EN</button><button data-v="off">Off</button>
+            </div>
+          </div>
+          <div class="set-row">
             <div><span class="name">About this system</span><span class="desc">Who built this, and why.</span></div>
             <div class="seg"><button data-act="about">Open</button></div>
           </div>
@@ -1016,6 +1022,10 @@ const SettingsApp = {
       body.querySelectorAll('[data-set="theme"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === theme));
       body.querySelectorAll('[data-set="wall"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === wall));
       body.querySelectorAll('[data-set="accent"] .swatch').forEach((b) => b.classList.toggle('on', b.dataset.v === accent));
+
+      const ime = window.LumeIME;
+      const imeVal = !ime || !ime.on ? 'off' : ime.mode;
+      body.querySelectorAll('[data-set="ime"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === imeVal));
     };
 
     body.addEventListener('click', (e) => {
@@ -1026,6 +1036,13 @@ const SettingsApp = {
         if (kind === 'theme') OS.setTheme(v);
         if (kind === 'wall') OS.setWall(v);
         if (kind === 'accent') OS.setAccent(v);
+        if (kind === 'ime' && window.LumeIME) {
+          if (v === 'off') window.LumeIME.setOn(false);
+          else {
+            window.LumeIME.setOn(true);
+            window.LumeIME.setMode(v);
+          }
+        }
         sync();
         return;
       }
@@ -1042,6 +1059,7 @@ const SettingsApp = {
     });
 
     window.addEventListener('themechange', sync);
+    document.addEventListener('lume:ime', sync);
     sync();
   }
 };
