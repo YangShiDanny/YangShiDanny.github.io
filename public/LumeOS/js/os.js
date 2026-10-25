@@ -344,7 +344,7 @@
   }
 
   function dragWin(win, event) {
-    if (win.max) return;
+    if (win.max || event.button !== 0) return;
     const node = win.el;
     const rect = node.getBoundingClientRect();
     const area = el.windows.getBoundingClientRect();
@@ -543,33 +543,102 @@
     el.mbLogo.classList.add('open');
   }
 
-  function openCtxMenu(x, y) {
-    const items = [
-      ['Terminal', 'terminal', 'open'],
-      ['Files', 'files', 'open'],
-      ['Settings', 'settings', 'open'],
-      ['|', '', ''],
-      ['Cycle wallpaper', 'wall', 'cmd'],
-      ['Toggle theme', 'theme', 'cmd'],
-      ['|', '', ''],
-      ['About LumeOS', 'about', 'open']
-    ];
+  /* 右键菜单：与系统菜单共用一套行结构（图标 / 标签 / 提示），
+     所以两边看起来是同一个控件。items 里 '|' 表示分隔线。 */
+  let ctxItems = [];
 
-    el.ctxMenu.innerHTML = items
-      .map(([label, action, kind]) => {
-        if (label === '|') return '<div class="menu-sep"></div>';
-        return (
-          '<button class="menu-item" type="button" data-kind="' + kind + '" data-action="' + action + '">' +
-          label +
-          '</button>'
-        );
-      })
-      .join('');
+  function menuHTML(spec) {
+    let html = '';
+    if (spec.title) {
+      html +=
+        '<div class="menu-head"><span class="menu-title">' +
+        spec.title +
+        '</span><span class="menu-sub">' +
+        (spec.sub || '') +
+        '</span></div>';
+    }
+    spec.items.forEach((it, i) => {
+      if (it === '|') {
+        html += '<div class="menu-sep"></div>';
+        return;
+      }
+      html +=
+        '<button class="menu-item' + (it.danger ? ' danger' : '') + '" type="button" data-i="' + i + '">' +
+        '<span class="menu-ico">' + (ICON[it.ico] || '') + '</span>' +
+        '<span class="menu-label">' + it.label + '</span>' +
+        '<span class="menu-hint' + (it.next ? ' is-next' : '') + '">' +
+        (it.dot ? '<span class="menu-dot"></span>' : it.hint || '') +
+        '</span>' +
+        '</button>';
+    });
+    return html;
+  }
 
+  function popMenu(x, y, spec) {
+    ctxItems = spec.items;
+    el.ctxMenu.innerHTML = menuHTML(spec);
     el.ctxMenu.hidden = false;
+
+    /* 先量尺寸再定位，避免贴边时被裁掉 */
     const box = el.ctxMenu.getBoundingClientRect();
-    el.ctxMenu.style.left = Math.min(x, innerWidth - box.width - 8) + 'px';
-    el.ctxMenu.style.top = Math.min(y, innerHeight - box.height - 8) + 'px';
+    const maxX = Math.max(8, innerWidth - box.width - 8);
+    const maxY = Math.max(8, innerHeight - box.height - 8);
+    el.ctxMenu.style.left = Math.round(Math.min(Math.max(8, x), maxX)) + 'px';
+    el.ctxMenu.style.top = Math.round(Math.min(Math.max(8, y), maxY)) + 'px';
+  }
+
+  function openCtxMenu(x, y) {
+    const running = new Set();
+    wins.forEach((w) => running.add(w.app.id));
+    const wall = root.dataset.wall || 'stars';
+    const theme = root.dataset.theme === 'light' ? 'light' : 'dark';
+    const nextWall = ['stars', 'grid', 'plain'][(['stars', 'grid', 'plain'].indexOf(wall) + 1) % 3];
+
+    const launch = (id) => () => openApp(id);
+
+    popMenu(x, y, {
+      title: 'Desktop',
+      sub: `lume 1.0 · ${wins.size} window${wins.size === 1 ? '' : 's'}`,
+      items: [
+        { ico: 'search', label: 'Spotlight…', hint: '⌘K', run: openSpot },
+        '|',
+        { ico: 'terminal', label: 'Terminal', dot: running.has('terminal'), run: launch('terminal') },
+        { ico: 'files', label: 'Files', dot: running.has('files'), run: launch('files') },
+        { ico: 'settings', label: 'Settings', dot: running.has('settings'), run: launch('settings') },
+        '|',
+        { ico: 'wall', label: 'Cycle wallpaper', hint: `→ ${nextWall}`, next: true, run: () => setWall(nextWall) },
+        {
+          ico: 'theme',
+          label: 'Toggle theme',
+          hint: `→ ${theme === 'dark' ? 'light' : 'dark'}`,
+          next: true,
+          run: () => setTheme(theme === 'dark' ? 'light' : 'dark')
+        },
+        '|',
+        { ico: 'about', label: 'About LumeOS', run: () => openApp('about') }
+      ]
+    });
+  }
+
+  function openWinMenu(x, y, win) {
+    const rect = win.el.getBoundingClientRect();
+    const isFront = focusedKey === win.key;
+    const minimize = () => {
+      win.minimized = true;
+      win.el.style.display = 'none';
+      updateDockState();
+    };
+
+    popMenu(x, y, {
+      title: win.app.name,
+      sub: `${Math.round(rect.width)}×${Math.round(rect.height)} · ${isFront ? 'front' : 'back'}`,
+      items: [
+        { ico: 'min', label: 'Minimize', run: minimize },
+        { ico: 'max', label: win.max ? 'Restore' : 'Zoom', run: () => toggleMax(win) },
+        '|',
+        { ico: 'close', label: 'Close Window', hint: '⌥W', danger: true, run: () => closeWin(win.key) }
+      ]
+    });
   }
 
   function runSysCommand(cmd) {
@@ -799,15 +868,9 @@
   el.ctxMenu.addEventListener('click', (e) => {
     const item = e.target.closest('.menu-item');
     if (!item) return;
-    const action = item.dataset.action;
+    const spec = ctxItems[Number(item.dataset.i)];
     closeMenus();
-    if (item.dataset.kind === 'open') openApp(action);
-    if (action === 'wall') {
-      const order = ['stars', 'grid', 'plain'];
-      const next = order[(order.indexOf(root.dataset.wall || 'stars') + 1) % order.length];
-      setWall(next);
-    }
-    if (action === 'theme') setTheme(root.dataset.theme === 'light' ? 'dark' : 'light');
+    if (spec && spec.run) spec.run();
   });
 
   el.mbSearch.addEventListener('click', openSpot);
@@ -823,8 +886,23 @@
   });
 
   el.desktop.addEventListener('contextmenu', (e) => {
-    if (e.target.closest('.window, .dock, .menubar')) return;
+    const t = e.target;
+    const winEl = t.closest('.window');
+
+    if (winEl) {
+      /* 只在标题栏给窗口菜单；窗口正文保留原生菜单，复制/粘贴还要用 */
+      if (!t.closest('.win-titlebar')) return;
+      const key = Array.from(wins.keys()).find((k) => wins.get(k).el === winEl);
+      if (!key) return;
+      e.preventDefault();
+      closeMenus();
+      openWinMenu(e.clientX, e.clientY, wins.get(key));
+      return;
+    }
+
+    if (t.closest('.dock, .menubar')) return;
     e.preventDefault();
+    closeMenus();
     openCtxMenu(e.clientX, e.clientY);
   });
 
@@ -888,6 +966,11 @@
   /* -------------------------------------------------------- */
   buildDock();
   buildDeskIcons();
+
+  /* 系统菜单里的图标占位一次性填上，右键菜单是动态生成的 */
+  $$('.menu-ico[data-ico]').forEach((node) => {
+    node.innerHTML = ICON[node.dataset.ico] || '';
+  });
 
   const alreadyBooted = (function () {
     try {

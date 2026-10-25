@@ -783,7 +783,7 @@ textarea {
 .menu {
   position: fixed;
   z-index: 1200;
-  min-width: 214px;
+  min-width: 232px;
   padding: 6px;
   border-radius: 12px;
   background: var(--glass);
@@ -819,29 +819,68 @@ textarea {
   color: var(--faint);
 }
 .menu-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   width: 100%;
-  padding: 7px 10px;
+  padding: 7px 9px;
   border-radius: 7px;
   font-size: 12.5px;
   color: var(--on-panel);
   text-align: left;
   transition: background 0.15s ease, color 0.15s ease;
 }
+.menu-ico {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  color: var(--faint);
+  transition: color 0.15s ease;
+}
+.menu-ico svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+.menu-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .menu-item:hover {
   background: var(--hover-strong);
   color: var(--text);
 }
+.menu-item:hover .menu-ico {
+  color: var(--on-panel);
+}
 .menu-item.danger:hover {
   color: var(--danger);
 }
+.menu-item.danger:hover .menu-ico {
+  color: var(--danger);
+}
 .menu-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--faint);
+  white-space: nowrap;
+}
+.menu-hint.is-next {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+.menu-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .menu-sep {
   height: 1px;
