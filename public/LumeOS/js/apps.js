@@ -526,27 +526,52 @@ const EditorApp = {
       <div class="editor">
         <div class="editor-bar">
           <span class="file">untitled</span>
-          <span class="lang" hidden>lume</span>
+          <span class="lang" hidden>txt</span>
           <span class="spacer"></span>
           <span class="words">0 words</span>
-          <button class="editor-btn primary" type="button" data-act="save">Save</button>
+          <button class="editor-btn run" type="button" data-act="run" title="Run (⌘⏎)" hidden>Run</button>
+          <button class="editor-btn primary" type="button" data-act="save" title="Save (⌘S)">Save</button>
         </div>
         <div class="editor-wrap">
           <pre class="editor-code" aria-hidden="true" hidden><code></code></pre>
           <textarea class="editor-area" spellcheck="false" wrap="off" aria-label="Editor"></textarea>
         </div>
+        <div class="editor-out" hidden>
+          <div class="editor-out-bar">
+            <span>Output</span>
+            <span class="spacer"></span>
+            <span class="meta"></span>
+            <button class="close" type="button" data-act="close-out" aria-label="Hide output">×</button>
+          </div>
+          <pre class="editor-out-body"></pre>
+        </div>
       </div>`;
 
     const area = body.querySelector('.editor-area');
+    const wrap = body.querySelector('.editor-wrap');
     const codeBox = body.querySelector('.editor-code');
     const codeEl = codeBox.querySelector('code');
     const langTag = body.querySelector('.editor-bar .lang');
     const fileLabel = body.querySelector('.editor-bar .file');
     const words = body.querySelector('.editor-bar .words');
+    const runBtn = body.querySelector('[data-act="run"]');
+    const outPanel = body.querySelector('.editor-out');
+    const outMeta = body.querySelector('.editor-out-bar .meta');
+    const outBody = body.querySelector('.editor-out-body');
 
-    /* .lume 文件走语法高亮：文字画在下面的 <pre> 里，textarea 只负责输入和光标 */
+    /* 扩展名 → 标签文字 / 配色：.lume 用强调色，纯文本用中性色，md 用绿 */
+    const extOf = (p) => {
+      const base = LumeFS.baseOf(p);
+      const i = base.lastIndexOf('.');
+      return i > 0 ? base.slice(i + 1).toLowerCase() : '';
+    };
+    const KIND = { lume: 'lume', md: 'doc', markdown: 'doc' };
+
+    const ext = path ? extOf(path) : '';
+    const isLume = ext === 'lume';
     const syntax = !!(path && window.LumeHighlight && LumeHighlight.isLume(path));
 
+    /* .lume 文件走语法高亮：文字画在下面的 <pre> 里，textarea 只负责输入和光标 */
     const paint = () => {
       if (!syntax) return;
       codeEl.innerHTML = LumeHighlight.render(area.value);
@@ -570,8 +595,14 @@ const EditorApp = {
     }
 
     codeBox.hidden = !syntax;
-    langTag.hidden = !syntax;
     area.classList.toggle('is-code', syntax);
+
+    if (ext) {
+      langTag.hidden = false;
+      langTag.textContent = ext.toUpperCase();
+      langTag.dataset.kind = KIND[ext] || 'text';
+    }
+    runBtn.hidden = !isLume;
 
     const save = () => {
       if (!path) {
@@ -582,6 +613,27 @@ const EditorApp = {
       dirty = false;
       sync();
       window.LumeOS.toast('Saved ' + LumeFS.baseOf(path));
+    };
+
+    /* 在编辑器里直接跑：和终端 lume run 是同一个 VM */
+    const run = () => {
+      if (!isLume || !window.LumeVM) return;
+      const name = path ? LumeFS.baseOf(path) : 'untitled.lume';
+      const t0 = performance.now();
+      const res = LumeVM.run(area.value, { name: name });
+      const ms = Math.max(1, Math.round(performance.now() - t0));
+
+      outPanel.hidden = false;
+      if (res.ok) {
+        outBody.innerHTML = res.output.length
+          ? res.output.map((line) => '<span class="line">' + esc(line) + '</span>').join('\n')
+          : '<span class="dim">ran clean, printed nothing</span>';
+        outMeta.textContent = res.output.length + ' lines · ' + ms + ' ms';
+      } else {
+        outBody.innerHTML = '<span class="err">' + esc(res.message) + '</span>';
+        outMeta.textContent = 'error · ' + ms + ' ms';
+      }
+      outBody.scrollTop = 0;
     };
 
     area.addEventListener('input', () => {
@@ -597,22 +649,27 @@ const EditorApp = {
     });
 
     area.addEventListener('keydown', (e) => {
-      if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === 's') {
         e.preventDefault();
         save();
       }
-      if (e.key === 'Tab') {
+      if (mod && e.key === 'Enter') {
         e.preventDefault();
-        const start = area.selectionStart;
-        area.value = area.value.slice(0, start) + '  ' + area.value.slice(area.selectionEnd);
-        area.selectionStart = area.selectionEnd = start + 2;
-        dirty = true;
-        sync();
-        paint();
+        run();
       }
     });
 
     body.querySelector('[data-act="save"]').addEventListener('click', save);
+    runBtn.addEventListener('click', run);
+    body.querySelector('[data-act="close-out"]').addEventListener('click', () => {
+      outPanel.hidden = true;
+    });
+
+    /* 自动缩进 / 括号配对 / 关键字补全（.lume 才启用代码行为） */
+    if (window.LumeEdit) {
+      LumeEdit.attach({ area, wrap, lang: isLume ? 'lume' : 'text' });
+    }
 
     sync();
     paint();

@@ -1350,15 +1350,23 @@ textarea {
   color: var(--accent);
   text-transform: uppercase;
 }
+/* 非代码文件的标签：同一枚 chip，只是不抢强调色 */
+.editor-bar .lang[data-kind='text'] {
+  color: var(--muted);
+}
+.editor-bar .lang[data-kind='doc'] {
+  color: var(--ok);
+}
 .editor-wrap {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
-/* textarea 与高亮层必须逐像素对齐：同一套字体、行高、内边距 */
+/* textarea、高亮层、量光标的镜子必须逐像素对齐：同一套字体、行高、内边距 */
 .editor-code,
-.editor-area {
+.editor-area,
+.editor-mirror {
   position: absolute;
   inset: 0;
   margin: 0;
@@ -1372,6 +1380,18 @@ textarea {
   tab-size: 2;
   white-space: pre;
   overflow: auto;
+}
+/* 镜子只用来量光标坐标，不可见也不吃事件 */
+.editor-mirror {
+  right: auto;
+  bottom: auto;
+  height: auto;
+  z-index: -1;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 .editor-code {
   z-index: 0;
@@ -1406,6 +1426,121 @@ textarea {
   background: var(--syn-sel);
   color: transparent;
   -webkit-text-fill-color: transparent;
+}
+
+/* ---------- 补全浮层（跟右键菜单同一套材质） ---------- */
+.editor-pop {
+  position: absolute;
+  z-index: 6;
+  min-width: 168px;
+  max-width: 260px;
+  padding: 4px;
+  border-radius: 9px;
+  background: var(--glass);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid var(--glass-line);
+  box-shadow: 0 16px 38px -20px rgba(0, 0, 0, 0.9);
+  animation: popIn 0.12s ease;
+}
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+.pop-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--on-panel);
+  cursor: default;
+}
+.pop-row.active {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.pop-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pop-kind {
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.pop-row.active .pop-kind {
+  color: var(--accent);
+}
+
+/* ---------- 运行输出面板 ---------- */
+.editor-out {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  max-height: 46%;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.editor-out[hidden] {
+  display: none;
+}
+.editor-out-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex: none;
+}
+.editor-out-bar .spacer {
+  flex: 1;
+}
+.editor-out-bar .close {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--faint);
+  padding: 0 2px;
+}
+.editor-out-bar .close:hover {
+  color: var(--text);
+}
+.editor-out-body {
+  margin: 0;
+  padding: 0 12px 10px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--on-panel);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.editor-out-body .err {
+  color: var(--danger);
+}
+.editor-out-body .dim {
+  color: var(--faint);
+}
+.editor-btn.run {
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  color: var(--ok);
+}
+.editor-btn.run:hover {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  border-color: var(--ok);
+  color: var(--ok);
 }
 
 /* ---------- 语法着色 ---------- */

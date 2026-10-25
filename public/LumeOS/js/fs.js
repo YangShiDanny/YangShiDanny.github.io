@@ -5,8 +5,8 @@
    ============================================================ */
 
 const LumeFS = (function () {
-  /* v3：hello.lume 换成可被浏览器 VM 真正跑通的版本，另加 syntax.lume */
-  const KEY = 'lume.fs.v3';
+  /* v4：README 补上编辑器用法（自动缩进/配对/补全/Run），旧 v3 编辑记录丢弃 */
+  const KEY = 'lume.fs.v4';
 
   const SEED = {
     '/': { type: 'dir' },
@@ -40,8 +40,18 @@ to feel like a real machine for about thirty seconds.
 3. Open Terminal and run \`neofetch\`.
 4. Toggle the theme from the menu bar.
 5. Open work/hello.lume — .lume files get syntax colour in the editor.
-6. Run it: \`cd work\`, then \`lume run hello.lume\`; \`lume build hello.lume\` writes hello.c.
-7. Right-click the desktop.
+6. Hit Run in the editor toolbar (or Cmd+Enter) — output lands under the code.
+7. In Terminal: \`cd work\`, then \`lume run hello.lume\`; \`lume build hello.lume\` writes hello.c.
+8. Right-click the desktop, or a window's title bar.
+
+## In the editor
+
+- Enter keeps the indent, adds one level after \`{\`, and \`}\` dedents itself.
+- \`(\` \`[\` \`{\` \`"\` \`'\` close themselves; the closing key skips over.
+- Tab / Shift+Tab indent or dedent the selected lines.
+- Cmd+/ comments the selection.
+- Typing a name pops a suggestion list — Enter or Tab takes it, Esc drops it.
+- The chip next to the filename tells you what kind of file you have open.
 `
     },
 
