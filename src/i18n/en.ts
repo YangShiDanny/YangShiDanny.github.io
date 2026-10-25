@@ -56,7 +56,7 @@ export default {
   },
   about: {
     heading: "About",
-    tagline: "Always tinkering.",
+    tagline: "Engineering Digital Reality.",
     intro: "I'm a middle-school student in Shanghai who's into computers as a whole — web pages, static site generators, and all kinds of random front-end experiments. I build things for fun, not for a job title.",
     ageLabel: "Age",
     birth: "Born: 2011-09-27",
