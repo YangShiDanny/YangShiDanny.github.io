@@ -61,10 +61,52 @@ export default {
         name: "MC 生存模式辅助工具包",
         desc: "给 Minecraft 26.1.2 做的 Fabric 整合包，围绕生存与体验优化：Sodium + Iris + Lithium 提性能，Baritone 跑图、SeedCrackerX 破种子、Chunky 预生成地形。把 zip 丢进任意支持 Modrinth/CurseForge 整合包导入的启动器即可。",
         tags: ["Minecraft", "Fabric", "整合包", "72 MB"],
-        link: "/downloads/survivalkits_modpack.zip",
-        download: true
+        link: "/downloads/survivalkits_modpack/"
       }
     ]
+  },
+  download: {
+    heading: "下载",
+    title: "MC 生存模式辅助工具包",
+    lead: "这个 72 MB 的整合包托管在 GitHub，不占这个站点的流量——静态托管本来就不适合放这么大的文件。下面选一个源，浏览器直接从那头下载。",
+    sizeLabel: "大小",
+    filesLabel: "文件",
+    shaLabel: "SHA-256",
+    sourceHeading: "下载源",
+    sourceNote: "延迟由浏览器实时测量。400 ms 以内都很舒服；GitHub 超时就走镜像。",
+    probing: "测量中…",
+    fastest: "最快",
+    slowest: "最慢",
+    unreachable: "无法连接",
+    remeasure: "重新测速",
+    directLabel: "GitHub · 直连",
+    directHint: "大陆以外最快。大陆内有时很慢或被挡。",
+    mirrorLabel: "gh-proxy.com · 镜像",
+    mirrorHint: "公共 GitHub 代理，大陆访问通常更稳。",
+    downloadBtn: "下载 .zip",
+    copyBtn: "复制链接",
+    copied: "已复制",
+    copyPrompt: "复制这个链接：",
+    warningHeading: "说明",
+    warningBody: "镜像是第三方公共代理。任何 GitHub 链接都能过它，但它看得到经过的流量——介意的话走直连。",
+    insideHeading: "整合包里有什么",
+    insideItems: [
+      "Sodium + Iris + Lithium —— 渲染与 tick 性能",
+      "Baritone —— 自动跑图与挖矿路线",
+      "SeedCrackerX —— 游戏内反推世界种子",
+      "Chunky —— 探索前预生成地形",
+      "一套调过的生存体验优化 mod"
+    ],
+    installHeading: "怎么装",
+    installSteps: [
+      "从上面任选一个源下载 zip。",
+      "打开启动器——Prism、MultiMC、ATLauncher、CurseForge 都行。",
+      "用「导入整合包」/「从文件添加实例」，选中这个 zip。",
+      "启动。剩下的 mod 启动器会在首次运行时自己拉。"
+    ],
+    verifyHeading: "校验下载",
+    verifyNote: "下载后比对哈希，应当完全一致。",
+    back: "全部项目"
   },
   about: {
     heading: "关于",

@@ -38,6 +38,26 @@ const padW = (s, n) => {
 };
 
 /* ---------------------------------------------------------- */
+/*  Python runtime (Pyodide)                                   */
+/* ---------------------------------------------------------- */
+/* 包来自 Pyodide 官方 release，不重新打包、不改内容。
+   pyodide-core 是"刚好能启动"的最小集：CPython + 标准库编到 WASM，
+   不含 numpy/pandas 那些预编译 wheel（那些是 pyodide-*.tar.bz2 里另外的部分）。
+   README 里有对他们的致谢。 */
+const PYODIDE = {
+  version: '314.0.7',
+  bytes: 6757104,
+  direct:
+    'https://github.com/pyodide/pyodide/releases/download/314.0.7/pyodide-core-314.0.7.tar.bz2',
+  get sources() {
+    return [
+      { id: 'mirror', label: 'gh-proxy.com', url: 'https://gh-proxy.com/' + this.direct },
+      { id: 'direct', label: 'GitHub', url: this.direct }
+    ];
+  }
+};
+
+/* ---------------------------------------------------------- */
 /*  Terminal                                                   */
 /* ---------------------------------------------------------- */
 const TerminalApp = {
@@ -65,6 +85,8 @@ const TerminalApp = {
     let cwd = LumeFS.HOME;
     const history = [];
     let histIdx = 0;
+    /* py setup 正在下载时置位，防止用户连按回车开好几个 6.4MB 的请求 */
+    const state = { pyBusy: false };
 
     const promptPath = () => {
       if (cwd === LumeFS.HOME) return '~';
@@ -107,6 +129,7 @@ const TerminalApp = {
           ['pwd', 'print working directory'],
           ['open <app>', 'launch an app (try: files, editor, about)'],
           ['lume <run|build> <file>', 'compile a .lume file in the browser'],
+          ['py <setup|run|status>', 'install the Python runtime locally'],
           ['neofetch', 'system information'],
           ['theme <dark|light>', 'switch appearance'],
           ['wall <stars|grid|plain>', 'change wallpaper'],
@@ -267,6 +290,211 @@ const TerminalApp = {
         }
         window.LumeOS.openApp(app);
         printDim(`launching ${APPS[app].name}…`);
+      },
+
+      /* ---------- py：把 Python 运行时装进浏览器本地 ----------
+         「装」的实质就是下回来存进 IndexedDB。包不是我们的，
+         是 Pyodide 官方 release 里的 pyodide-core（CPython + 标准库，
+         经 Emscripten 编到 WASM）。这里只负责搬运和记录版本，
+         不修改、不重新打包，README 里有对他们的致谢。
+
+         直连和镜像都给：GitHub releases 在大陆经常挂住，
+         gh-proxy 是同一个文件的公共代理，可用性高得多。 */
+      py(args) {
+        const sub = (args[0] || '').toLowerCase();
+        const PY = PYODIDE;
+        const KEY = 'pyodide-core';
+
+        const human = (n) =>
+          n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB';
+
+        const usage = () => {
+          print(`<span class="dim">LumeOS python runtime</span>  ·  Pyodide ${PY.version}`);
+          print('');
+          print(`  <span class="u">${esc(padW('py setup', 22))}</span><span class="dim">下载并装进浏览器本地</span>`);
+          print(`  <span class="u">${esc(padW('py status', 22))}</span><span class="dim">看装没装、占多少空间</span>`);
+          print(`  <span class="u">${esc(padW('py run <file.py>', 22))}</span><span class="dim">跑一个 .py 文件</span>`);
+          print(`  <span class="u">${esc(padW('py remove', 22))}</span><span class="dim">删掉本地运行时</span>`);
+          print('');
+          printDim(`包大小约 ${human(PY.bytes)}，只需装一次，之后离线可用。`);
+          print('');
+        };
+
+        if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
+          usage();
+          return;
+        }
+
+        if (sub === 'status') {
+          if (!window.LumeStore) {
+            print(`<span class="err">py: storage module not loaded</span>`);
+            return;
+          }
+          window.LumeStore.get(KEY).then((rec) => {
+            if (!rec) {
+              printDim('python runtime  not installed');
+              printDim(`run <span class="u">py setup</span> to fetch it (${human(PY.bytes)})`);
+              return;
+            }
+            const m = rec.meta || {};
+            const d = rec.at ? new Date(rec.at).toLocaleString() : '?';
+            print(`<span class="dim">version  </span>Pyodide ${esc(m.version || PY.version)}`);
+            print(`<span class="dim">size     </span>${human(m.size || PY.bytes)}`);
+            print(`<span class="dim">source   </span>${esc(m.url || PY.direct)}`);
+            print(`<span class="dim">stored   </span>${esc(d)}`);
+            if (m.mirrored) printDim('(fetched through gh-proxy.com)');
+            print('');
+            window.LumeStore.estimate().then((est) => {
+              if (est && est.usage != null) {
+                printDim(`origin usage  ${human(est.usage)}` + (est.quota ? ` / ${human(est.quota)} available` : ''));
+              }
+            });
+          });
+          return;
+        }
+
+        if (sub === 'remove') {
+          if (!window.LumeStore) {
+            print(`<span class="err">py: storage module not loaded</span>`);
+            return;
+          }
+          window.LumeStore.del(KEY).then(() => printDim('python runtime removed'));
+          return;
+        }
+
+        if (sub === 'setup' || sub === 'install') {
+          if (!window.LumeStore) {
+            print(`<span class="err">py: storage module not loaded</span>`);
+            return;
+          }
+          if (state.pyBusy) {
+            printDim('py: already downloading, hang on…');
+            return;
+          }
+
+          /* 已经装过就别重复下 6.4MB，除非加 --force */
+          const force = args.includes('--force') || args.includes('-f');
+          window.LumeStore.get(KEY).then((rec) => {
+            if (rec && !force) {
+              printDim(`already installed (Pyodide ${(rec.meta || {}).version || PY.version})`);
+              printDim('use <span class="u">py setup --force</span> to re-download');
+              return;
+            }
+            download();
+          });
+
+          function download() {
+            state.pyBusy = true;
+            /* 先量一下两条路谁快，省得盲选。只发 Range 取 1 字节，
+               量的是连接 + 首字节，不真拉包。 */
+            printDim(`probing sources…`);
+            const probes = PY.sources.map((s) =>
+              fetch(s.url, { headers: { Range: 'bytes=0-0' }, cache: 'no-store' })
+                .then((r) => ({ s: s, ok: r.ok || r.status === 206 }))
+                .catch(() => ({ s: s, ok: false }))
+            );
+
+            Promise.all(probes)
+              .then((res) => {
+                const alive = res.filter((r) => r.ok).map((r) => r.s);
+                const order = alive.length ? alive.concat(PY.sources.filter((s) => !alive.includes(s))) : PY.sources;
+                const pick = order[0];
+                print(`<span class="dim">fetching</span> ${human(PY.bytes)} via ${esc(pick.label)}`);
+                printDim('(first setup only — it stays in this browser)');
+                return tryFetch(order, 0);
+              })
+              .then((r) => {
+                if (!r) {
+                  print(`<span class="err">py: download failed on every source</span>`);
+                  printDim('check your connection, or try again later');
+                  state.pyBusy = false;
+                  return;
+                }
+                return window.LumeStore.put(
+                  KEY,
+                  r.blob,
+                  { version: PY.version, size: r.blob.size, url: r.url, mirrored: r.mirrored }
+                ).then(() => {
+                  print('');
+                  print(`<span class="u">installed</span>  Pyodide ${esc(PY.version)}  ·  ${human(r.blob.size)}`);
+                  printDim('stored in this browser — offline from now on');
+                  print('');
+                  printDim(`试一下：写到 work/hello.py，然后 <span class="u">py run work/hello.py</span>`);
+                  state.pyBusy = false;
+                });
+              })
+              .catch((e) => {
+                print(`<span class="err">py: ${esc(e.message || String(e))}</span>`);
+                state.pyBusy = false;
+              });
+          }
+
+          /* 逐个源试，前一个失败就换下一个。用 XMLHttpRequest 而不是 fetch，
+             因为要看下载进度——6.4MB 在慢网下能等十几秒，
+             不给进度条用户会以为卡死了，然后再按一次回车又开一个下载。 */
+          function tryFetch(list, i) {
+            if (i >= list.length) return Promise.resolve(null);
+            const src = list[i];
+            return new Promise((resolve) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open('GET', src.url, true);
+              xhr.responseType = 'blob';
+              let lastPct = -1;
+
+              const bar = (pct) => {
+                const w = 22;
+                const filled = Math.round((pct / 100) * w);
+                const line = '█'.repeat(filled) + '░'.repeat(w - filled);
+                /* 就地更新同一行，别每次重绘都刷一条新输出 */
+                if (!bar.el) {
+                  bar.el = document.createElement('div');
+                  bar.el.className = 'term-line';
+                  out.appendChild(bar.el);
+                }
+                bar.el.innerHTML =
+                  `<span class="u">${line}</span> <span class="dim">${String(pct).padStart(3)}%</span>`;
+                scroll();
+              };
+
+              xhr.onprogress = (e) => {
+                if (!e.lengthComputable) return;
+                const pct = Math.floor((e.loaded / e.total) * 100);
+                if (pct !== lastPct) {
+                  lastPct = pct;
+                  bar(pct);
+                }
+              };
+              xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
+                  bar(100);
+                  resolve({ blob: xhr.response, url: src.url, mirrored: src.id === 'mirror' });
+                } else {
+                  printDim(`${src.label}: HTTP ${xhr.status}, trying next…`);
+                  resolve(tryFetch(list, i + 1));
+                }
+              };
+              xhr.onerror = () => {
+                printDim(`${src.label}: unreachable, trying next…`);
+                resolve(tryFetch(list, i + 1));
+              };
+              xhr.ontimeout = () => {
+                printDim(`${src.label}: timed out, trying next…`);
+                resolve(tryFetch(list, i + 1));
+              };
+              xhr.timeout = 120000;
+              xhr.send();
+            });
+          }
+          return;
+        }
+
+        if (sub === 'run') {
+          print(`<span class="err">py: the runtime is installed, but wiring it into the VM is not done yet.</span>`);
+          printDim('`py setup` and `py status` work today; `py run` lands in a later pass.');
+          return;
+        }
+
+        printDim(`py: unknown subcommand '${sub}' — try: py help`);
       },
 
       neofetch() {

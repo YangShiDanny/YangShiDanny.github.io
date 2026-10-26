@@ -30,6 +30,26 @@
   <!-- 壁纸 -->
   <canvas id="wallpaper" aria-hidden="true"></canvas>
   <div class="wall-grid" aria-hidden="true"></div>
+
+  <!-- 背景标志：壁纸之上、窗口之下，纯装饰、不吃指针。
+       用 SVG 而不是位图，缩放不糊；描边 + 渐变都由 currentColor / CSS 变量给，
+       跟随主题切换，不需要维护两套资源。 -->
+  <div class="wall-mark" aria-hidden="true">
+    <svg viewBox="0 0 200 200" fill="none" aria-hidden="true">
+      <!-- 外圈：慢速自转，用极细的虚线做出轨道感 -->
+      <circle class="wm-orbit" cx="100" cy="100" r="86" stroke="currentColor" stroke-width="0.6" stroke-dasharray="2 7" />
+      <!-- 内圈：反向自转，形成对转的层次 -->
+      <circle class="wm-orbit wm-orbit-b" cx="100" cy="100" r="62" stroke="currentColor" stroke-width="0.5" stroke-dasharray="1 5" />
+      <!-- 主体：Lume 的四芒星，与开机页 boot-star 同一形状 -->
+      <path class="wm-star" d="M100 28 118 82 172 100 118 118 100 172 82 118 28 100 82 82Z"
+        stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+      <!-- 中心实心小星，给一个视觉落点 -->
+      <path class="wm-core" d="M100 76 106 94 124 100 106 106 100 124 94 106 76 100 94 94Z"
+        fill="currentColor" />
+    </svg>
+    <div class="wall-mark-word">LUME<span>OS</span></div>
+  </div>
+
   <div class="wall-glow" aria-hidden="true"></div>
 
   <!-- 自定义光标 -->
@@ -151,6 +171,7 @@
   </div>
 
   <script src="js/icons.js"></script>
+  <script src="js/store.js"></script>
   <script src="js/fs.js"></script>
   <script src="js/lume-highlight.js"></script>
   <script src="js/lume-markdown.js"></script>

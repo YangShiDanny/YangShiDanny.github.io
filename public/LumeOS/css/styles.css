@@ -204,6 +204,102 @@ textarea {
   opacity: 0.25;
 }
 
+/* ---------- 背景标志 ----------
+   层次：壁纸(canvas) → 网格 → 标志 → 辉光 → 窗口。
+   z-index 取 0，和壁纸同层但排在后面，所以压在壁纸上、辉光下。
+   pointer-events:none 保证不挡桌面框选和右键菜单。 */
+.wall-mark {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 0;
+  transform: translate(-50%, -54%);
+  width: min(42vmin, 340px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  pointer-events: none;
+  color: var(--accent);
+  /* 整体压得很淡：它是背景语言，不是主体。窗口一开就应该退到后面去。 */
+  opacity: 0.14;
+  transition: opacity 0.5s ease;
+}
+.wall-mark svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  filter: drop-shadow(0 0 22px color-mix(in srgb, var(--accent) 45%, transparent));
+}
+
+/* 两圈轨道反向慢转，周期给足（一边 48s、一边 72s），
+   避免出现明显的机械感节拍。 */
+.wm-orbit {
+  transform-origin: 100px 100px;
+  animation: wm-spin 72s linear infinite;
+  opacity: 0.55;
+}
+.wm-orbit-b {
+  animation: wm-spin 48s linear infinite reverse;
+  opacity: 0.38;
+}
+@keyframes wm-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 主星极缓慢地"呼吸"，幅度很小，只是让它不像贴图 */
+.wm-star {
+  opacity: 0.85;
+  animation: wm-breathe 9s ease-in-out infinite;
+}
+@keyframes wm-breathe {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+.wm-core {
+  opacity: 0.9;
+}
+
+.wall-mark-word {
+  font-family: var(--font-display, inherit);
+  font-size: clamp(11px, 1.5vmin, 15px);
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: currentColor;
+  opacity: 0.75;
+  /* 字母间距会在末尾多出一格，视觉上左偏，补回来 */
+  margin-right: -0.42em;
+}
+.wall-mark-word span {
+  opacity: 0.55;
+}
+
+/* 网格壁纸本来就有格线，标志再亮一点会打架，压暗 */
+[data-wall='grid'] .wall-mark {
+  opacity: 0.1;
+}
+[data-wall='plain'] .wall-mark {
+  opacity: 0.2;
+}
+
+/* 窄屏 / 矮屏下缩小，别糊满整个桌面 */
+@media (max-width: 640px), (max-height: 560px) {
+  .wall-mark {
+    width: min(52vmin, 220px);
+    opacity: 0.11;
+  }
+}
+
+/* 尊重系统级"减少动态效果"：停掉自转与呼吸，只留静态标志 */
+@media (prefers-reduced-motion: reduce) {
+  .wm-orbit,
+  .wm-orbit-b,
+  .wm-star {
+    animation: none;
+  }
+}
+
 /* ---------- 自定义光标 ---------- */
 #cursor,
 #cursor-ring {

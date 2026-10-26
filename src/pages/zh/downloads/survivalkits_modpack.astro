@@ -1,0 +1,524 @@
+---
+import BaseLayout from '../../../components/BaseLayout.astro';
+import translations from '../../../i18n';
+import type { Locale } from '../../../i18n';
+
+const locale = Astro.currentLocale as Locale;
+const t = translations[locale];
+
+/* 文件放在 GitHub 仓库根目录的 downloads/ 下。
+   站点本身就是这个仓库的 Pages 产物，所以同一个 commit 里就两份拷贝：
+   一份随 Pages 发布、一份留在仓库里供 raw 直链取用。
+   用 raw.githubusercontent.com 而不是 github.com/.../raw：
+   后者会 302 跳转，测速和下载都多一跳，还常被中间设备拦。 */
+const REPO = 'YangShiDanny/YangShiDanny.github.io';
+const FILE = 'downloads/survivalkits_modpack.zip';
+const DIRECT = `https://raw.githubusercontent.com/${REPO}/main/${FILE}`;
+const MIRROR = `https://gh-proxy.com/${DIRECT}`;
+
+/* 真实值，由 sha256sum 算出来的，别手改 */
+const SIZE = '71,990,753 bytes';
+const SHA = '2b6c5f28f63c93bdf64ac523f4009ba9ef32320f9acb224b96a876f02747b130';
+
+const sources = [
+  { id: 'direct', label: t.download.directLabel, hint: t.download.directHint, url: DIRECT },
+  { id: 'mirror', label: t.download.mirrorLabel, hint: t.download.mirrorHint, url: MIRROR }
+];
+---
+
+<BaseLayout title={`${t.download.heading} · ${t.download.title} | Yangshi`}>
+  <section class="section">
+    <div class="container">
+      <a href={locale === 'zh' ? '/zh/projects' : '/projects'} class="back-link">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5" /><path d="m12 19-7-7 7-7" /></svg>
+        <span>{t.download.back}</span>
+      </a>
+
+      <p class="eyebrow">{t.download.heading}</p>
+      <h1 class="display dl-title">{t.download.title}</h1>
+      <p class="dl-lead">{t.download.lead}</p>
+
+      <dl class="dl-meta">
+        <div>
+          <dt>{t.download.sizeLabel}</dt>
+          <dd>{SIZE}</dd>
+        </div>
+        <div>
+          <dt>{t.download.filesLabel}</dt>
+          <dd class="mono">{FILE.split('/').pop()}</dd>
+        </div>
+        <div class="dl-meta-sha">
+          <dt>{t.download.shaLabel}</dt>
+          <dd class="mono">{SHA}</dd>
+        </div>
+      </dl>
+
+      <div class="dl-sources-head">
+        <h2 class="dl-h2">{t.download.sourceHeading}</h2>
+        <button type="button" class="btn btn-outline dl-remeasure" id="dl-remeasure" hidden>
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></svg>
+          <span>{t.download.remeasure}</span>
+        </button>
+      </div>
+      <p class="dl-note">{t.download.sourceNote}</p>
+
+      <div class="dl-sources" id="dl-sources"
+        data-msg-probing={t.download.probing}
+        data-msg-fastest={t.download.fastest}
+        data-msg-slowest={t.download.slowest}
+        data-msg-unreachable={t.download.unreachable}
+        data-msg-copied={t.download.copied}
+        data-msg-copy-prompt={t.download.copyPrompt}>
+        {sources.map((s) => (
+          <div class="dl-source" data-url={s.url} data-id={s.id}>
+            <div class="dl-source-top">
+              <div class="dl-source-name">{s.label}</div>
+              <div class="dl-latency" data-role="latency">
+                <span class="dl-dot" aria-hidden="true"></span>
+                <span class="dl-ms">{t.download.probing}</span>
+              </div>
+            </div>
+            <p class="dl-source-hint">{s.hint}</p>
+            <div class="dl-source-actions">
+              <a class="btn btn-solid dl-get" href={s.url} rel="noopener noreferrer">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>
+                <span>{t.download.downloadBtn}</span>
+              </a>
+              <button type="button" class="btn btn-outline dl-copy" data-copy={s.url}>
+                <span>{t.download.copyBtn}</span>
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p class="dl-warn">
+        <strong>{t.download.warningHeading}</strong> — {t.download.warningBody}
+      </p>
+
+      <div class="dl-cols">
+        <div>
+          <h2 class="dl-h2">{t.download.insideHeading}</h2>
+          <ul class="dl-list">
+            {t.download.insideItems.map((item) => <li>{item}</li>)}
+          </ul>
+        </div>
+        <div>
+          <h2 class="dl-h2">{t.download.installHeading}</h2>
+          <ol class="dl-list dl-steps">
+            {t.download.installSteps.map((step) => <li>{step}</li>)}
+          </ol>
+        </div>
+      </div>
+
+      <h2 class="dl-h2">{t.download.verifyHeading}</h2>
+      <p class="dl-note">{t.download.verifyNote}</p>
+      <pre class="dl-code"><code>sha256sum </code><code class="dl-code-file">{FILE.split('/').pop()}</code><code>
+</code><code class="dl-code-hash">{SHA}</code><code>  </code><code class="dl-code-file">{FILE.split('/').pop()}</code></pre>
+      <pre class="dl-code dl-code-win"><code>certutil -hashfile </code><code class="dl-code-file">{FILE.split('/').pop()}</code><code> SHA256</code></pre>
+    </div>
+  </section>
+
+  <script>
+    /* 测速思路：不发整包，只发一个 Range 请求取头 2 字节。
+       量的是「连接建立 + 首字节时间」（TTFB），这正好是用户最能感知的那一段——
+       真按吞吐量测就得下几 MB，反而慢、还浪费流量。
+       超时放 6s：大陆访问 raw.githubusercontent.com 常见的情况是
+       直接挂住而不是立刻报错，等太久页面就像卡死了。 */
+    const TIMEOUT = 6000;
+    const PROBE_BYTES = 2;
+
+    const fmt = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+
+    function probe(url: string): Promise<number | null> {
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = (v: number | null) => {
+          if (done) return;
+          done = true;
+          resolve(v);
+        };
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => {
+          ctrl.abort();
+          finish(null);
+        }, TIMEOUT);
+
+        const t0 = performance.now();
+        fetch(url, {
+          method: 'GET',
+          headers: { Range: `bytes=0-${PROBE_BYTES - 1}` },
+          signal: ctrl.signal,
+          cache: 'no-store',
+          mode: 'cors'
+        })
+          .then((r) => {
+            /* 只要拿到响应头就算连通。gh-proxy 有时返回 200 而不是 206
+               （把整个文件的头也吐出来），这种情况同样算成功。 */
+            if (!r.ok && r.status !== 206) throw new Error(String(r.status));
+            const ms = performance.now() - t0;
+            /* 把 body 读掉，别留个挂着的连接 */
+            r.arrayBuffer().catch(() => {});
+            clearTimeout(timer);
+            finish(ms);
+          })
+          .catch(() => {
+            clearTimeout(timer);
+            finish(null);
+          });
+      });
+    }
+
+    function init() {
+      const box = document.getElementById('dl-sources');
+      const again = document.getElementById('dl-remeasure');
+      if (!box) return;
+      const cards = Array.from(box.querySelectorAll<HTMLElement>('.dl-source'));
+
+      /* 文案一律从 DOM 读，别在脚本里写死英文——
+         这是个双语言站点，写死就等于中文页看到英文状态。 */
+      const t = {
+        probing: box.dataset.msgProbing || '…',
+        fastest: box.dataset.msgFastest || 'fastest',
+        slowest: box.dataset.msgSlowest || 'slowest',
+        unreachable: box.dataset.msgUnreachable || 'unreachable',
+        copied: box.dataset.msgCopied || 'copied',
+        copyPrompt: box.dataset.msgCopyPrompt || 'Copy this link:'
+      };
+
+      async function run() {
+        if (again) again.hidden = true;
+        cards.forEach((c) => {
+          c.classList.remove('is-fastest', 'is-unreachable');
+          const lat = c.querySelector('[data-role="latency"]')!;
+          lat.className = 'dl-latency';
+          c.querySelector('.dl-ms')!.textContent = t.probing;
+        });
+
+        const results = await Promise.all(
+          cards.map(async (c) => ({ card: c, ms: await probe(c.dataset.url!) }))
+        );
+
+        const reachable = results.filter((r) => r.ms !== null) as { card: HTMLElement; ms: number }[];
+
+        for (const r of results) {
+          const lat = r.card.querySelector('[data-role="latency"]')!;
+          const ms = r.card.querySelector('.dl-ms')!;
+          if (r.ms === null) {
+            lat.classList.add('is-bad');
+            ms.textContent = t.unreachable;
+          } else {
+            lat.classList.add(r.ms < 800 ? 'is-good' : 'is-mid');
+            ms.textContent = fmt(r.ms);
+          }
+        }
+
+        if (reachable.length) {
+          reachable.sort((a, b) => a.ms - b.ms);
+          const best = reachable[0];
+          const worst = reachable[reachable.length - 1];
+
+          const tag = (card: HTMLElement, text: string, cls: string) => {
+            let el = card.querySelector('.dl-badge') as HTMLElement | null;
+            if (!el) {
+              el = document.createElement('span');
+              el.className = 'dl-badge';
+              card.querySelector('.dl-source-name')!.appendChild(el);
+            }
+            el.textContent = text;
+            el.classList.add(cls);
+          };
+
+          tag(best.card, t.fastest, 'is-fastest');
+          best.card.classList.add('is-fastest');
+          /* 两个都能连时，把慢的那个也标出来——用户一眼就知道为啥推荐另一个 */
+          if (worst !== best) tag(worst.card, t.slowest, 'is-slowest');
+        }
+
+        if (again) again.hidden = false;
+      }
+
+      run();
+      if (again) again.addEventListener('click', run);
+
+      /* 复制链接 */
+      box.addEventListener('click', async (e) => {
+        const btn = (e.target as HTMLElement).closest('.dl-copy') as HTMLElement | null;
+        if (!btn) return;
+        const url = btn.dataset.copy!;
+        const label = btn.querySelector('span')!;
+        const original = label.textContent;
+        try {
+          await navigator.clipboard.writeText(url);
+          label.textContent = t.copied;
+          setTimeout(() => (label.textContent = original), 1400);
+        } catch {
+          /* 没有剪贴板权限就退回到让用户自己复制 */
+          window.prompt(t.copyPrompt, url);
+        }
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  </script>
+
+  <style>
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.8125rem;
+      color: var(--muted);
+      text-decoration: none;
+      margin-bottom: 40px;
+      transition: color 0.2s ease;
+    }
+    .back-link:hover {
+      color: var(--text);
+    }
+
+    .dl-title {
+      font-size: clamp(2rem, 5vw, 3rem);
+      margin: 12px 0 0;
+    }
+    .dl-lead {
+      color: var(--muted);
+      line-height: 1.7;
+      max-width: 46rem;
+      margin: 20px 0 0;
+    }
+
+    .dl-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 36px 0 0;
+    }
+    .dl-meta > div {
+      background: var(--panel);
+      padding: 16px 18px;
+    }
+    .dl-meta dt {
+      font-size: 0.6875rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-family: var(--font-mono, monospace);
+    }
+    .dl-meta dd {
+      margin: 7px 0 0;
+      font-size: 0.875rem;
+      color: var(--on-panel);
+    }
+    .dl-meta-sha {
+      grid-column: 1 / -1;
+    }
+    .dl-meta-sha dd {
+      word-break: break-all;
+      font-size: 0.75rem;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+    .mono {
+      font-family: var(--font-mono, monospace);
+    }
+
+    .dl-h2 {
+      font-family: var(--font-display);
+      font-size: 1.125rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text);
+      margin: 52px 0 0;
+    }
+    .dl-sources-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .dl-remeasure {
+      font-size: 0.75rem;
+      padding: 6px 12px;
+    }
+    .dl-note {
+      color: var(--muted);
+      font-size: 0.8125rem;
+      line-height: 1.65;
+      margin: 10px 0 0;
+      max-width: 46rem;
+    }
+
+    .dl-sources {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .dl-source {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 20px;
+      transition: border-color 0.25s ease, background 0.25s ease;
+    }
+    .dl-source.is-fastest {
+      border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+    }
+    .dl-source.is-unreachable {
+      opacity: 0.62;
+    }
+    .dl-source-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .dl-source-name {
+      font-family: var(--font-display);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: var(--on-panel);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .dl-latency {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono, monospace);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .dl-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+    .dl-latency.is-good .dl-dot {
+      background: #3fbf6f;
+    }
+    .dl-latency.is-good {
+      color: #3fbf6f;
+    }
+    .dl-latency.is-mid .dl-dot {
+      background: #d9a336;
+    }
+    .dl-latency.is-mid {
+      color: #d9a336;
+    }
+    .dl-latency.is-bad .dl-dot {
+      background: #d95555;
+    }
+    .dl-latency.is-bad {
+      color: #d95555;
+    }
+
+    .dl-badge {
+      font-family: var(--font-mono, monospace);
+      font-size: 0.625rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      border-radius: 99px;
+      border: 1px solid currentColor;
+      line-height: 1.5;
+    }
+    .dl-badge.is-fastest {
+      color: var(--accent);
+    }
+    .dl-badge.is-slowest {
+      color: var(--muted);
+    }
+
+    .dl-source-hint {
+      color: var(--muted);
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin: 10px 0 18px;
+    }
+    .dl-source-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .dl-warn {
+      margin: 18px 0 0;
+      padding: 13px 16px;
+      border-left: 2px solid color-mix(in srgb, #d9a336 60%, transparent);
+      background: color-mix(in srgb, #d9a336 7%, transparent);
+      border-radius: 0 8px 8px 0;
+      color: var(--muted);
+      font-size: 0.8125rem;
+      line-height: 1.65;
+    }
+    .dl-warn strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .dl-cols {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 0 48px;
+    }
+    .dl-list {
+      color: var(--muted);
+      font-size: 0.875rem;
+      line-height: 1.75;
+      margin: 14px 0 0;
+      padding-left: 20px;
+    }
+    .dl-list li {
+      margin-bottom: 6px;
+    }
+    .dl-steps li::marker {
+      color: var(--accent);
+      font-family: var(--font-mono, monospace);
+    }
+
+    .dl-code {
+      margin: 10px 0 0;
+      padding: 14px 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      font-family: var(--font-mono, monospace);
+      font-size: 0.75rem;
+      line-height: 1.7;
+      color: var(--muted);
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .dl-code code {
+      font-family: inherit;
+    }
+    .dl-code-file {
+      color: var(--on-panel);
+    }
+    .dl-code-hash {
+      color: var(--accent);
+    }
+
+    @media (max-width: 640px) {
+      .dl-meta {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</BaseLayout>

@@ -63,10 +63,52 @@ export default {
         name: "Minecraft Survival Kit",
         desc: "A Fabric modpack for Minecraft 26.1.2 built around survival and QoL: Sodium + Iris + Lithium for performance, Baritone for pathing, SeedCrackerX for seed cracking, Chunky for pre-generating terrain. Drop the zip into any launcher that imports Modrinth/CurseForge packs.",
         tags: ["Minecraft", "Fabric", "Modpack", "72 MB"],
-        link: "/downloads/survivalkits_modpack.zip",
-        download: true
+        link: "/downloads/survivalkits_modpack/"
       }
     ]
+  },
+  download: {
+    heading: "Download",
+    title: "Minecraft Survival Kit",
+    lead: "This 72 MB pack is hosted on GitHub, not on this site — a static host is the wrong place to serve a file that size. Pick a source below and your browser fetches it straight from there.",
+    sizeLabel: "Size",
+    filesLabel: "File",
+    shaLabel: "SHA-256",
+    sourceHeading: "Download source",
+    sourceNote: "Latency is measured live from your browser. Under ~400 ms is comfortable; if GitHub times out, use the mirror.",
+    probing: "measuring…",
+    fastest: "fastest",
+    slowest: "slowest",
+    unreachable: "unreachable",
+    remeasure: "Measure again",
+    directLabel: "GitHub · direct",
+    directHint: "Best outside mainland China. Occasionally slow or blocked inside it.",
+    mirrorLabel: "gh-proxy.com · mirror",
+    mirrorHint: "Public GitHub proxy. Usually the reliable choice from mainland China.",
+    downloadBtn: "Download .zip",
+    copyBtn: "Copy link",
+    copied: "Copied",
+    copyPrompt: "Copy this link:",
+    warningHeading: "Heads up",
+    warningBody: "The mirror is a third-party public proxy. It works with any GitHub URL, but it does see the traffic that passes through it — if you would rather not, use the direct link.",
+    insideHeading: "What's inside",
+    insideItems: [
+      "Sodium + Iris + Lithium — rendering and tick performance",
+      "Baritone — automated pathing and mining routes",
+      "SeedCrackerX — recover the world seed in-game",
+      "Chunky — pre-generate terrain before you explore",
+      "A tuned set of QoL mods for survival play"
+    ],
+    installHeading: "How to install",
+    installSteps: [
+      "Download the zip from either source.",
+      "Open your launcher — Prism, MultiMC, ATLauncher and CurseForge all work.",
+      "Use \"Import modpack\" / \"Add instance from file\" and pick the zip.",
+      "Launch it. The launcher pulls the remaining mods on first run."
+    ],
+    verifyHeading: "Verify the download",
+    verifyNote: "Compare the hash after downloading — it should match exactly.",
+    back: "All projects"
   },
   about: {
     heading: "About",
