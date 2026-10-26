@@ -459,47 +459,55 @@
     var candsBox = b.querySelector('.ime-cands');
 
     if (!state.ready) {
-      status.hidden = false;
-      status.textContent = state.loading ? 'loading dictionary…' : 'dictionary unavailable';
-      kindEl.hidden = true;
-      pageEl.hidden = true;
-      candsBox.innerHTML = '';
+      if (status) {
+        status.hidden = false;
+        status.textContent = state.loading ? 'loading dictionary…' : 'dictionary unavailable';
+      }
+      if (kindEl) kindEl.hidden = true;
+      if (pageEl) pageEl.hidden = true;
+      if (candsBox) candsBox.innerHTML = '';
       positionBar();
       return;
     }
-    status.hidden = true;
+    if (status) status.hidden = true;
 
     var total = state.cands.length;
 
     /* 候选来源标签：简拼 / 整句时提示一下，让人知道发生了什么 */
     var kind = state.kind || 'empty';
-    if (KIND_LABEL[kind]) {
-      kindEl.hidden = false;
-      kindEl.textContent = KIND_LABEL[kind];
-      kindEl.className = 'ime-kind k-' + kind;
-    } else {
-      kindEl.hidden = true;
+    if (kindEl) {
+      if (KIND_LABEL[kind]) {
+        kindEl.hidden = false;
+        kindEl.textContent = KIND_LABEL[kind];
+        kindEl.className = 'ime-kind k-' + kind;
+      } else {
+        kindEl.hidden = true;
+      }
     }
 
     var start = state.page * PAGE;
     var pageItems = state.cands.slice(start, start + PAGE);
 
     if (!pageItems.length) {
-      candsBox.innerHTML = '<span class="ime-none">no match · <b>space</b> to type raw · <b>esc</b> to clear</span>';
-      pageEl.hidden = true;
+      if (candsBox) candsBox.innerHTML = '<span class="ime-none">no match · <b>space</b> to type raw · <b>esc</b> to clear</span>';
+      if (pageEl) pageEl.hidden = true;
       positionBar();
       return;
     }
 
-    /* 组装候选 + 翻页箭头 */
-    var frag = document.createDocumentFragment();
+    /* 组装候选 + 翻页箭头（直接挂到 candsBox 上，不用 DocumentFragment） */
+    if (candsBox) candsBox.innerHTML = '';
+    var addNode = function (node) {
+      if (candsBox) candsBox.appendChild(node);
+    };
+
     if (state.page > 0) {
       var prev = document.createElement('span');
       prev.className = 'ime-nav';
       prev.dataset.dir = 'prev';
       prev.textContent = '‹';
       prev.title = 'Previous page (PageUp / -)';
-      frag.appendChild(prev);
+      addNode(prev);
     }
     pageItems.forEach(function (c, i) {
       var el = document.createElement('span');
@@ -512,7 +520,7 @@
       num.textContent = String((i + 1) % 10);
       el.appendChild(num);
       el.appendChild(document.createTextNode(c.w));
-      frag.appendChild(el);
+      addNode(el);
     });
     if (start + PAGE < total) {
       var next = document.createElement('span');
@@ -520,19 +528,18 @@
       next.dataset.dir = 'next';
       next.textContent = '›';
       next.title = 'More candidates (PageDown / =)';
-      frag.appendChild(next);
+      addNode(next);
     }
-
-    candsBox.innerHTML = '';
-    candsBox.appendChild(frag);
 
     /* 页码：够一页以上才显示 */
     var pages = Math.ceil(total / PAGE);
-    if (pages > 1) {
-      pageEl.hidden = false;
-      pageEl.textContent = (state.page + 1) + '/' + pages;
-    } else {
-      pageEl.hidden = true;
+    if (pageEl) {
+      if (pages > 1) {
+        pageEl.hidden = false;
+        pageEl.textContent = (state.page + 1) + '/' + pages;
+      } else {
+        pageEl.hidden = true;
+      }
     }
 
     positionBar();
