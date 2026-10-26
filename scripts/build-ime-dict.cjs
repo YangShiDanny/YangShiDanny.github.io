@@ -29,10 +29,18 @@ const OUT = path.join(ROOT, 'public/LumeOS/assets/ime-dict.txt');
 const TRUNC = 12;        // 每个拼音最多保留多少词（一页 9 个，够翻页）
 const MAX_SYLLABLE = 6;
 /* 桶的最低词频门槛：词库里 3.5 万个拼音里 3.1 万个只有 1 个极冷僻词
-   （比如 zhuangzhuangzhuang 这种），它们占了近 54% 的体积却几乎打不到。
-   只保留"这个拼音下最好的词至少这么常用"的桶。
-   5 万 ≈ 常见词水平，剩下的是人名/地名/古语等长尾。 */
-const MIN_BEST_FREQ = 50000;
+   （比如 zhuangzhuangzhuang 这种），只保留"这个拼音下最好的词够常用"的桶。
+
+   门槛定在 1 万是有实测依据的（.workbuddy/tmp/ime-threshold.cjs）：
+     门槛    拼音桶   体积
+     50000   19126    0.44MB   ← 拽/虐/撇/揣/戳/剖/谬 全部打不出
+     30000   29384    0.67MB   拽/虐/撇 回来了，揣/戳/剖/谬 仍缺
+     10000   35069    0.80MB   七个全回           ← 选这里
+     1       35084    0.80MB   再降几乎无变化
+   1 万往下就撞到"所有含单字词的拼音"这个天花板（35069/35084），
+   意味着剩下 15 个桶连一个单字都没有，纯粹是长尾词组，不要也罢。
+   一个常用字打不出来比多 0.35MB 难受得多。 */
+const MIN_BEST_FREQ = 10000;
 
 const rows = JSON.parse(fs.readFileSync(SRC, 'utf8'));
 if (!Array.isArray(rows) || !rows.length) throw new Error('词库为空或格式不对');
@@ -135,15 +143,25 @@ function addIni(ini, word, freq) {
 }
 
 /* 通用层：每个桶取前几个词，按首字母串归并。
-   散字组合（词长 != 音节数）降权，因为它们只是首字母撞串，不是用户本意。 */
+   散字组合（词长 != 音节数）降权，因为它们只是首字母撞串，不是用户本意。
+
+   简拼这边要额外卡一道词频门槛：主词库放宽到 1 万是为了让"拽/虐/撇/剖/谬"
+   这些字能直接打出来（全拼走的是 cached(key)，只读主词库）。
+   但简拼不需要这么宽——它本来就服务于高频短语，把 4 万条长尾词全挂上去
+   只会让简拼段从 0.33MB 里塞进 1.1 万个几乎没人会用的串。
+   实测门槛 5 万时简拼段 5820 桶 / 0.11MB，不卡则 11583 桶 / 0.33MB。 */
+const INI_MIN_WORD_FREQ = 50000;
 const MISALIGN_DIV = 20;
+let iniWords = 0;
 for (const [key, arr] of buckets) {
   if (key.length < 2) continue;
   const ini = initialsOf(key);
   if (!ini || ini === key) continue;      // 单音节（ni → ni）不算简拼
   const n = sylCountOf(key);
   for (const [w, f] of arr) {
+    if (f < INI_MIN_WORD_FREQ) continue;
     addIni(ini, w, w.length === n ? f : Math.round(f / MISALIGN_DIV));
+    iniWords++;
   }
 }
 
