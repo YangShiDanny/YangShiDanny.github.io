@@ -322,7 +322,11 @@ textarea {
   top: 0;
   left: 0;
   pointer-events: none;
-  z-index: 9000;
+  /* 指针必须压在"所有会浮起来的东西"上面：
+     IME 候选栏 99999、虚拟键盘 99990 都比菜单/窗口高，
+     光标原来只有 9000，走到屏幕键盘上就被键盘盖住了。
+     再往上留一档给触摸光晕，两者都不该被应用浮层截断。 */
+  z-index: 999999;
   border-radius: 999px;
   transform: translate(-50%, -50%);
   will-change: transform, width, height, opacity;
@@ -1470,6 +1474,158 @@ textarea {
   color: var(--text);
   border-color: var(--text);
   background: var(--hover);
+}
+
+/* ---------- 关机态 ----------
+   锁屏是临时盖一层，点一下回来；关机是真的下线。
+   所以这里把桌面彻底压掉，只留一块干净的告别屏，
+   并给出两个出口：Quit（关标签页 / 回站点首页）和 Reboot。 */
+.veil.is-poweroff {
+  background: rgba(3, 3, 5, 0.94);
+  backdrop-filter: blur(38px) saturate(70%) brightness(0.7);
+  -webkit-backdrop-filter: blur(38px) saturate(70%) brightness(0.7);
+  cursor: pointer;
+}
+/* 关机的字比锁屏小一号：它是"结束了"，不是"暂停中" */
+.veil.is-poweroff .po-word {
+  font-size: clamp(1.9rem, 6vw, 3.1rem);
+  letter-spacing: -0.02em;
+  opacity: 0.9;
+}
+.veil.is-poweroff .po-sub {
+  letter-spacing: 0.16em;
+}
+.po-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 30px;
+  cursor: default;
+}
+.po-actions .veil-btn {
+  margin-top: 0;
+}
+.po-actions .po-quit {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.po-actions .po-quit:hover {
+  background: var(--text);
+  color: var(--panel, #0a0a0c);
+  border-color: var(--text);
+}
+.po-hint {
+  margin-top: 16px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--danger);
+}
+.po-hint[hidden] {
+  display: none;
+}
+
+/* 关机后鼠标指针回到系统样式：桌面已经不存在了，
+   再留一颗玻璃珠子跟着走会很怪 */
+.system-halted #cursor,
+.system-halted #cursor-ring {
+  display: none;
+}
+.system-halted,
+.system-halted * {
+  cursor: auto !important;
+}
+.system-halted .veil.is-poweroff,
+.system-halted .veil.is-poweroff .po-actions {
+  cursor: pointer;
+}
+
+/* ---------- 长按光晕（触摸设备的右键替代） ----------
+   手机上没法右键，长按是唯一自然的"次要操作"手势。
+   光标本体在 pointer:coarse 时整个模块都不启动，
+   所以这套光晕是独立的一层，不复用 #cursor-ring。
+
+   液态玻璃的三件套照旧：backdrop-filter 折射、
+   多层 inset 阴影做受光、1px 亮边做厚度。
+   半径比鼠标环大得多（96px），因为手指比光标粗，
+   小光晕会被指尖整个盖住。 */
+.touch-halo {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 96px;
+  height: 96px;
+  margin: -48px 0 0 -48px;
+  border-radius: 999px;
+  /* 比光标低一档：光晕是背景，珠子是主体 */
+  z-index: 999998;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.35);
+  /* 起手：从指尖炸开，先冲过头再回落，水感来自这个过冲 */
+  transition: transform 0.34s cubic-bezier(0.16, 1.3, 0.3, 1), opacity 0.24s ease;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(3px) saturate(200%) brightness(1.2);
+  -webkit-backdrop-filter: blur(3px) saturate(200%) brightness(1.2);
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.55), transparent 46%),
+    radial-gradient(circle at 70% 74%, color-mix(in srgb, var(--accent) 46%, transparent), transparent 62%),
+    radial-gradient(circle, rgba(255, 255, 255, 0.08), transparent 74%);
+  box-shadow:
+    inset 0 0 18px rgba(255, 255, 255, 0.3),
+    inset 0 2px 4px rgba(255, 255, 255, 0.6),
+    inset 0 -3px 8px color-mix(in srgb, var(--accent) 34%, transparent),
+    0 6px 26px rgba(0, 0, 0, 0.42),
+    0 0 38px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.touch-halo.show {
+  opacity: 1;
+  transform: scale(1);
+}
+/* 松手后往外散掉：不收回原点，而是淡出＋放大，
+   读起来像"这次按下被系统收下了" */
+.touch-halo.release {
+  transform: scale(1.5);
+  opacity: 0;
+  transition: transform 0.42s cubic-bezier(0.2, 0.7, 0.3, 1), opacity 0.42s ease;
+}
+
+/* 触发瞬间四散的小光点：让"长按成功"有明确的反馈，
+   不然用户不确定是没按准还是没反应 */
+.touch-ripple {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 999px;
+  z-index: 999998;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 70%, white 30%);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 80%, transparent);
+  animation: rippleOut 0.6s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+}
+@keyframes rippleOut {
+  from {
+    opacity: 0.9;
+    transform: translate(var(--dx, 0), var(--dy, 0)) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(calc(var(--dx, 0) * 4.2), calc(var(--dy, 0) * 4.2)) scale(0.3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .touch-halo,
+  .touch-halo.release {
+    transition: opacity 0.18s ease;
+    transform: scale(1);
+  }
+  .touch-ripple {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 /* ============================================================

@@ -52,9 +52,10 @@
 
   <div class="wall-glow" aria-hidden="true"></div>
 
-  <!-- 自定义光标 -->
-  <div id="cursor" aria-hidden="true"></div>
-  <div id="cursor-ring" aria-hidden="true"></div>
+  <!-- 自定义光标不写在这里。
+       它由 os.js 在启动时 append 到 body 末尾 —— 必须排在所有浮层之后，
+       这样即便某个浮层的 z-index 被调高、或者某天有人给 body 加了
+       transform/filter 造出新的层叠上下文，光标也还在最后一手。 -->
 
   <!-- ============ 开机 ============ -->
   <div class="boot" id="boot">

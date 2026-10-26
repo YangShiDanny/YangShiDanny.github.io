@@ -119,9 +119,25 @@
   /*  光标                                                      */
   /* -------------------------------------------------------- */
   (function cursor() {
-    const dot = $('#cursor');
-    const ring = $('#cursor-ring');
-    if (!dot || !ring || window.matchMedia('(pointer: coarse)').matches) return;
+    if (window.matchMedia('(pointer: coarse)').matches) return;
+
+    /* 光标节点自己造、自己挂到 body 最后一位。
+       挂在 HTML 里时它排在 .desktop / .menubar / .dock / .veil 前面，
+       一旦任何一层冒出更高的 z-index（比如输入法候选栏 99999、
+       屏幕键盘 99990），光标就被压到下面看不见了。
+       排到最后 + 极高的 z-index，两层保险。 */
+    function mount(id) {
+      let node = document.getElementById(id);
+      if (!node) {
+        node = document.createElement('div');
+        node.id = id;
+        node.setAttribute('aria-hidden', 'true');
+      }
+      document.body.appendChild(node);
+      return node;
+    }
+    const dot = mount('cursor');
+    const ring = mount('cursor-ring');
 
     let mx = innerWidth / 2;
     let my = innerHeight / 2;
@@ -1132,6 +1148,10 @@
   /*  锁屏 / 关机                                                */
   /* -------------------------------------------------------- */
   function lockScreen() {
+    /* 万一从关机态直接切到锁屏（菜单/快捷键都可能），
+       先把 .is-poweroff 和 system-halted 摘掉，
+       否则锁屏会继承关机的暗色底和 pointer 光标 */
+    clearHalt();
     el.veil.hidden = false;
     el.veil.innerHTML =
       '<div class="veil-inner">' +
@@ -1152,21 +1172,84 @@
     el.veil.innerHTML = '';
     el.veil.onclick = null;
     document.onkeydown = null;
+    clearHalt();
   }
 
+  /* 关机。
+     和锁屏不一样：锁屏是临时盖一层，点一下就回来；关机是真的下线。
+     所以这里给两个出口，而不是一个：
+
+       1. Quit        —— 关标签页。window.close() 只在脚本自己开的窗口里
+                        生效，用户手输网址进来的会被拦，这时退化成回首页
+                        （站点根目录），等于"离开这个页面"。
+       2. Reboot      —— 清掉 booted 标记再刷新，重走一遍开机动画。
+
+     以前整块 veil 都是 onclick=reload，手机端点哪儿都重启，
+     想退出反而没路走。 */
   function powerOff() {
     el.veil.hidden = false;
+    el.veil.classList.add('is-poweroff');
     el.veil.innerHTML =
       '<div class="veil-inner">' +
-      '<div class="veil-time" style="font-size:clamp(1.75rem,5vw,2.75rem);letter-spacing:0.02em">goodbye.</div>' +
-      '<div class="veil-date">press anywhere to reboot</div>' +
+      '<div class="veil-time po-word">goodbye.</div>' +
+      '<div class="veil-date po-sub">system halted · it is now safe to close this tab</div>' +
+      '<div class="po-actions">' +
+      '<button class="veil-btn po-quit" type="button" id="po-quit">Quit</button>' +
+      '<button class="veil-btn po-reboot" type="button" id="po-reboot">Reboot</button>' +
+      '</div>' +
+      '<div class="po-hint" id="po-hint" hidden></div>' +
       '</div>';
-    el.veil.onclick = function () {
+
+    /* 关机态下不要再有光标尾随，桌面已经下线了 */
+    document.documentElement.classList.add('system-halted');
+
+    const hint = $('#po-hint');
+    const say = (text) => {
+      if (!hint) return;
+      hint.textContent = text;
+      hint.hidden = false;
+    };
+
+    const quit = (e) => {
+      if (e) e.stopPropagation();
+      /* about:blank 是个安全的空页；若被拦则退到站点首页 */
+      try {
+        window.close();
+      } catch (err) {
+        /* 忽略：下面的兜底会处理 */
+      }
+      /* window.close() 成功的话页面已经没了，走到这行说明被拦 */
+      setTimeout(() => {
+        try {
+          location.href = '/';
+        } catch (err) {
+          say('Your browser blocked this. Close the tab manually.');
+        }
+      }, 80);
+    };
+
+    const reboot = (e) => {
+      if (e) e.stopPropagation();
       try {
         sessionStorage.removeItem('lume.booted');
-      } catch (e) {}
+      } catch (err) {}
       location.reload();
     };
+
+    const quitBtn = $('#po-quit');
+    const rebootBtn = $('#po-reboot');
+    if (quitBtn) quitBtn.addEventListener('click', quit);
+    if (rebootBtn) rebootBtn.addEventListener('click', reboot);
+
+    /* 点空白处 = 退出（最常用的动作，给最大的热区）。
+       按钮自己 stopPropagation，不会误触。 */
+    el.veil.onclick = quit;
+  }
+
+  /* 回到"活着"的状态：解锁 / 重启前都要清掉关机残渣 */
+  function clearHalt() {
+    document.documentElement.classList.remove('system-halted');
+    if (el.veil) el.veil.classList.remove('is-poweroff');
   }
 
   /* -------------------------------------------------------- */
@@ -1374,13 +1457,11 @@
 
   /* 全站接管右键：任何地方都不再弹浏览器原生菜单。
      应用内部（Files / Editor / Terminal）会自己 stopPropagation，
-     所以到这里的只剩桌面、标题栏、Dock、菜单栏和纯文字区。 */
-  document.addEventListener('contextmenu', (e) => {
-    if (e.defaultPrevented) return;
-    e.preventDefault();
+     所以到这里的只剩桌面、标题栏、Dock、菜单栏和纯文字区。
 
-    const t = e.target;
-
+     抽成 openCtxAt 是为了让手机长按也能走同一套分支 ——
+     长按本来就该等价于右键，两套逻辑分家迟早会走歪。 */
+  function openCtxAt(t, x, y) {
     /* 已经弹出来的菜单上再点右键：不重复弹，也不穿越到底下的桌面 */
     if (t.closest('.menu, #spotlight, #veil')) return;
 
@@ -1392,45 +1473,202 @@
 
       if (t.closest('.win-titlebar')) {
         closeMenus();
-        if (win) openWinMenu(e.clientX, e.clientY, win);
+        if (win) openWinMenu(x, y, win);
         return;
       }
       /* 正文里的输入框 / 文本区给编辑菜单 */
       const field = t.closest('input:not([type="hidden"]), textarea');
       if (field && !field.readOnly && !field.disabled) {
         closeMenus();
-        openEditMenu(e.clientX, e.clientY, field);
+        openEditMenu(x, y, field);
         return;
       }
       /* 其余正文还没自带菜单——给一个通用的窗口菜单，总比原生菜单好 */
       closeMenus();
-      if (win) openWinMenu(e.clientX, e.clientY, win);
+      if (win) openWinMenu(x, y, win);
       return;
     }
 
     const deskIcon = t.closest('.desk-icon');
     if (deskIcon) {
       closeMenus();
-      openDeskIconMenu(e.clientX, e.clientY, deskIcon);
+      openDeskIconMenu(x, y, deskIcon);
       return;
     }
 
     const dockItem = t.closest('.dock-item[data-app]');
     if (dockItem) {
       closeMenus();
-      openDockMenu(e.clientX, e.clientY, dockItem);
+      openDockMenu(x, y, dockItem);
       return;
     }
 
     if (t.closest('.menubar')) {
-      openSysMenu(e.clientX, e.clientY);
+      openSysMenu(x, y);
       return;
     }
     if (t.closest('.dock')) return;
 
     closeMenus();
-    openCtxMenu(e.clientX, e.clientY);
+    openCtxMenu(x, y);
+  }
+
+  document.addEventListener('contextmenu', (e) => {
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    openCtxAt(e.target, e.clientX, e.clientY);
   });
+
+  /* -------------------------------------------------------- */
+  /*  长按 = 右键（触摸设备）                                    */
+  /* -------------------------------------------------------- */
+  (function longPress() {
+    const coarse = window.matchMedia('(pointer: coarse)');
+
+    /* 长按阈值。450ms 是 Android / iOS 的原生长按手感区间
+       （系统在 500ms 左右触发菜单），压到 420 会误触，
+       拉到 600 用户会以为没反应。 */
+    const HOLD = 460;
+    /* 手指抖动容忍半径。超过这个距离就判定成"想滑动"，取消长按 ——
+       否则想滚页面的人会不停弹菜单。 */
+    const SLOP = 10;
+
+    let timer = 0;
+    let origin = null;
+    let target = null;
+    let halo = null;
+    let fired = false;
+
+    function ensureHalo() {
+      if (halo && halo.isConnected) return halo;
+      halo = document.createElement('div');
+      halo.className = 'touch-halo';
+      halo.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(halo);
+      return halo;
+    }
+
+    /* 光晕：指尖下方炸开一颗玻璃球，再撒一圈小光点。
+       小光点用 8 个方向 + 随机半径，比正圆扩散更像"溅开"。 */
+    function showHalo(x, y) {
+      const h = ensureHalo();
+      h.style.left = x + 'px';
+      h.style.top = y + 'px';
+      h.classList.remove('release');
+      /* 强制回流，保证同一次连按也能重放过渡 */
+      void h.offsetWidth;
+      h.classList.add('show');
+
+      for (let i = 0; i < 8; i++) {
+        const dot = document.createElement('div');
+        dot.className = 'touch-ripple';
+        const a = (Math.PI * 2 * i) / 8 + Math.random() * 0.4;
+        const r = 22 + Math.random() * 14;
+        dot.style.left = x + 'px';
+        dot.style.top = y + 'px';
+        dot.style.setProperty('--dx', Math.cos(a) * r + 'px');
+        dot.style.setProperty('--dy', Math.sin(a) * r + 'px');
+        document.body.appendChild(dot);
+        setTimeout(() => dot.remove(), 680);
+      }
+
+      if (navigator.vibrate) {
+        try {
+          navigator.vibrate(12);
+        } catch (e) {}
+      }
+    }
+
+    function releaseHalo() {
+      if (!halo) return;
+      halo.classList.add('release');
+      halo.classList.remove('show');
+      setTimeout(() => {
+        if (halo) halo.classList.remove('release');
+      }, 460);
+    }
+
+    function cancel() {
+      clearTimeout(timer);
+      timer = 0;
+      origin = null;
+      target = null;
+      if (!fired) releaseHalo();
+      fired = false;
+    }
+
+    function fire() {
+      fired = true;
+      const t = target;
+      const x = origin.x;
+      const y = origin.y;
+      showHalo(x, y);
+
+      /* 菜单要在光晕之后一点点出来：先看到玻璃球，
+         再看到菜单，顺序对了才像"系统响应了长按" */
+      setTimeout(() => {
+        if (t) openCtxAt(t, x, y);
+      }, 90);
+
+      /* 长按已经处理完这次触摸，后续的 click 要吞掉，
+         否则松手会顺带触发按钮 / 桌面图标的单击 */
+      window.__lumeSuppressClick = Date.now() + 700;
+    }
+
+    window.addEventListener(
+      'touchstart',
+      (e) => {
+        if (!coarse.matches) return;
+        if (e.touches.length !== 1) return cancel();
+
+        const touch = e.touches[0];
+        const el0 = document.elementFromPoint(touch.clientX, touch.clientY);
+        if (!el0) return;
+        /* 输入框里长按要留给系统的光标 / 选择手柄，
+           否则没法选词、没法拖动插入点 */
+        if (el0.closest('input, textarea, [contenteditable="true"]')) return;
+        /* 滚动容器里长按也可能是想选文字，那些交给浏览器 */
+        if (el0.closest('.ime-kb, .menu, #spotlight, #veil, .boot')) return;
+
+        origin = { x: touch.clientX, y: touch.clientY };
+        target = el0;
+        fired = false;
+        clearTimeout(timer);
+        timer = setTimeout(fire, HOLD);
+      },
+      { passive: true }
+    );
+
+    window.addEventListener(
+      'touchmove',
+      (e) => {
+        if (!origin) return;
+        const touch = e.touches[0];
+        if (!touch) return cancel();
+        const dx = touch.clientX - origin.x;
+        const dy = touch.clientY - origin.y;
+        /* 抖动过一次就不再判长按；松手前不会再重新计时，
+           避免"慢慢滑"被误当成长按 */
+        if (Math.hypot(dx, dy) > SLOP) cancel();
+      },
+      { passive: true }
+    );
+
+    window.addEventListener('touchend', () => cancel(), { passive: true });
+    window.addEventListener('touchcancel', () => cancel(), { passive: true });
+
+    /* 长按已经消费掉的触摸，别再触发一次点击 */
+    window.addEventListener(
+      'click',
+      (e) => {
+        if (window.__lumeSuppressClick && Date.now() < window.__lumeSuppressClick) {
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      },
+      true
+    );
+  })();
 
   el.spot.addEventListener('click', (e) => {
     if (e.target === el.spot) closeSpot();
@@ -1531,6 +1769,8 @@
     setTheme: setTheme,
     setWall: setWall,
     setAccent: setAccent,
+    /* 关机：Terminal 的 `shutdown` 和 Dock 电源键共用同一入口 */
+    shutdown: powerOff,
     systemInfo: systemInfo,
     uptimeText: uptimeText,
     redrawWallpaper: wall.redraw,

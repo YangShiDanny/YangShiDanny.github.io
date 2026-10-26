@@ -142,6 +142,7 @@ const TerminalApp = {
           ['history', 'recent commands'],
           ['clear', 'clear the screen'],
           ['banner', 'print the logo'],
+          ['shutdown', 'power off (click anywhere to quit)'],
           ['exit', 'close this window']
         ];
         printDim('available commands');
@@ -612,6 +613,16 @@ const TerminalApp = {
 
       exit() {
         window.LumeOS.closeFocused();
+      },
+
+      /* 关机不是关窗口，是整个系统下线。
+         和不带参数的 py 一样，这里也接受 --help。 */
+      shutdown(args) {
+        if (args && args[0] && /^--?(h|help)$/i.test(args[0])) {
+          printDim('usage: shutdown  ·  关机，之后点任意处即可离开本页');
+          return;
+        }
+        window.LumeOS.shutdown();
       }
     };
 
