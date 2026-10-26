@@ -6,23 +6,35 @@ import type { Locale } from '../../../i18n';
 const locale = Astro.currentLocale as Locale;
 const t = translations[locale];
 
-/* 文件放在 GitHub 仓库根目录的 downloads/ 下。
-   站点本身就是这个仓库的 Pages 产物，所以同一个 commit 里就两份拷贝：
-   一份随 Pages 发布、一份留在仓库里供 raw 直链取用。
-   用 raw.githubusercontent.com 而不是 github.com/.../raw：
-   后者会 302 跳转，测速和下载都多一跳，还常被中间设备拦。 */
+/* 文件在仓库里的真实路径是 public/downloads/…（Astro 的静态资源目录，
+   构建时会拷到站点根，所以站内访问是 /downloads/…，而 raw 直链必须带上 public/）。
+
+   为什么用 raw.githubusercontent.com 而不是 github.com/.../blob/...：
+   blob 是**网页**地址，返回 text/html，点它只会打开一个 GitHub 页面，下不到文件。
+   （实测：GitHub 原生 blob → content-type: text/html；raw → application/zip。
+   有意思的是 gh-proxy / gh.dpik.top 会替你把 blob 转成 raw，所以镜像后面
+   挂 blob 也能下——但直连不行，为了三个源写法统一，一律用 raw。）
+
+   gh-proxy / gh.dpik.top 都是公共 GitHub 代理：前面拼上完整 GitHub 地址即可。 */
 const REPO = 'YangShiDanny/YangShiDanny.github.io';
-const FILE = 'downloads/survivalkits_modpack.zip';
-const DIRECT = `https://raw.githubusercontent.com/${REPO}/main/${FILE}`;
-const MIRROR = `https://gh-proxy.com/${DIRECT}`;
+const REPO_PATH = 'public/downloads/survivalkits_modpack.zip';
+const BASE = 'downloads/survivalkits_modpack.zip';
+const DIRECT = `https://raw.githubusercontent.com/${REPO}/main/${REPO_PATH}`;
+const PROXY_A = `https://gh-proxy.com/${DIRECT}`;
+const PROXY_B = `https://gh.dpik.top/${DIRECT}`;
+const FNAME = BASE.split('/').pop();
 
 /* 真实值，由 sha256sum 算出来的，别手改 */
 const SIZE = '71,990,753 bytes';
 const SHA = '2b6c5f28f63c93bdf64ac523f4009ba9ef32320f9acb224b96a876f02747b130';
 
+/* 三个源：GitHub 直连 + 两个独立运营的镜像。
+   两个镜像而不是一个，是因为公共代理本身也会挂——多一条路就多一分可用性，
+   反正测速是并行的，多一个候选不增加等待时间。 */
 const sources = [
   { id: 'direct', label: t.download.directLabel, hint: t.download.directHint, url: DIRECT },
-  { id: 'mirror', label: t.download.mirrorLabel, hint: t.download.mirrorHint, url: MIRROR }
+  { id: 'proxy-a', label: 'gh-proxy.com', hint: t.download.mirrorHintA, url: PROXY_A },
+  { id: 'proxy-b', label: 'gh.dpik.top', hint: t.download.mirrorHintB, url: PROXY_B }
 ];
 ---
 
@@ -45,7 +57,7 @@ const sources = [
         </div>
         <div>
           <dt>{t.download.filesLabel}</dt>
-          <dd class="mono">{FILE.split('/').pop()}</dd>
+          <dd class="mono">{FNAME}</dd>
         </div>
         <div class="dl-meta-sha">
           <dt>{t.download.shaLabel}</dt>
@@ -113,9 +125,9 @@ const sources = [
 
       <h2 class="dl-h2">{t.download.verifyHeading}</h2>
       <p class="dl-note">{t.download.verifyNote}</p>
-      <pre class="dl-code"><code>sha256sum </code><code class="dl-code-file">{FILE.split('/').pop()}</code><code>
-</code><code class="dl-code-hash">{SHA}</code><code>  </code><code class="dl-code-file">{FILE.split('/').pop()}</code></pre>
-      <pre class="dl-code dl-code-win"><code>certutil -hashfile </code><code class="dl-code-file">{FILE.split('/').pop()}</code><code> SHA256</code></pre>
+      <pre class="dl-code"><code>sha256sum </code><code class="dl-code-file">{FNAME}</code><code>
+</code><code class="dl-code-hash">{SHA}</code><code>  </code><code class="dl-code-file">{FNAME}</code></pre>
+      <pre class="dl-code dl-code-win"><code>certutil -hashfile </code><code class="dl-code-file">{FNAME}</code><code> SHA256</code></pre>
     </div>
   </section>
 
@@ -359,7 +371,8 @@ const sources = [
 
     .dl-sources {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      /* 三个源：窄屏一列、中屏自动两列、宽屏三列并列 */
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
       gap: 14px;
       margin-top: 18px;
     }

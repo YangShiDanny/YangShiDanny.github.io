@@ -50,8 +50,11 @@ const PYODIDE = {
   direct:
     'https://github.com/pyodide/pyodide/releases/download/314.0.7/pyodide-core-314.0.7.tar.bz2',
   get sources() {
+    /* 两个镜像 + 直连。公共代理经常挂，多一条路就多一分成功率；
+       反正探测是并行的，多一个候选不多等。 */
     return [
-      { id: 'mirror', label: 'gh-proxy.com', url: 'https://gh-proxy.com/' + this.direct },
+      { id: 'gh-proxy', label: 'gh-proxy.com', url: 'https://gh-proxy.com/' + this.direct },
+      { id: 'gh-dpik', label: 'gh.dpik.top', url: 'https://gh.dpik.top/' + this.direct },
       { id: 'direct', label: 'GitHub', url: this.direct }
     ];
   }
@@ -342,7 +345,7 @@ const TerminalApp = {
             print(`<span class="dim">size     </span>${human(m.size || PY.bytes)}`);
             print(`<span class="dim">source   </span>${esc(m.url || PY.direct)}`);
             print(`<span class="dim">stored   </span>${esc(d)}`);
-            if (m.mirrored) printDim('(fetched through gh-proxy.com)');
+            if (m.mirrored) printDim('(fetched through ' + (m.via || 'a proxy') + ')');
             print('');
             window.LumeStore.estimate().then((est) => {
               if (est && est.usage != null) {
@@ -413,7 +416,7 @@ const TerminalApp = {
                 return window.LumeStore.put(
                   KEY,
                   r.blob,
-                  { version: PY.version, size: r.blob.size, url: r.url, mirrored: r.mirrored }
+                  { version: PY.version, size: r.blob.size, url: r.url, mirrored: r.mirrored, via: r.via }
                 ).then(() => {
                   print('');
                   print(`<span class="u">installed</span>  Pyodide ${esc(PY.version)}  ·  ${human(r.blob.size)}`);
@@ -467,7 +470,7 @@ const TerminalApp = {
               xhr.onload = () => {
                 if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
                   bar(100);
-                  resolve({ blob: xhr.response, url: src.url, mirrored: src.id === 'mirror' });
+                  resolve({ blob: xhr.response, url: src.url, mirrored: src.id !== 'direct', via: src.label });
                 } else {
                   printDim(`${src.label}: HTTP ${xhr.status}, trying next…`);
                   resolve(tryFetch(list, i + 1));
