@@ -389,20 +389,71 @@ const TerminalApp = {
 
           function download() {
             state.pyBusy = true;
-            /* 先量一下两条路谁快，省得盲选。只发 Range 取 1 字节，
-               量的是连接 + 首字节，不真拉包。 */
-            printDim(`probing sources…`);
-            const probes = PY.sources.map((s) =>
-              fetch(s.url, { headers: { Range: 'bytes=0-0' }, cache: 'no-store' })
-                .then((r) => ({ s: s, ok: r.ok || r.status === 206 }))
-                .catch(() => ({ s: s, ok: false }))
-            );
+            /* 先量一下每条路谁快，省得盲选。
+               只发 Range 取 64KB，量的是「连接 + 首字节 + 一小段吞吐」，
+               不真拉 6.4MB。首字节快但吞吐烂的源（常见于受限代理）
+               会被这一步直接排到后面。 */
+            printDim(`probing sources (${PY.sources.length})…`);
+            const measure = (s) => {
+              const t0 = performance.now();
+              return fetch(s.url, { headers: { Range: 'bytes=0-65535' }, cache: 'no-store' })
+                .then((r) => {
+                  const ttfb = performance.now() - t0;
+                  if (!r.ok && r.status !== 206) throw new Error(String(r.status));
+                  /* 有 body 就读一小段，拿真实吞吐；没有就当它只支持 HEAD */
+                  if (!r.body) return { s, ttfb, kbps: 0, ok: true };
+                  const reader = r.body.getReader();
+                  let got = 0;
+                  const t1 = performance.now();
+                  return reader
+                    .read()
+                    .then(({ value, done }) => {
+                      got = done ? 0 : (value || []).length;
+                      const dt = Math.max(1, performance.now() - t1);
+                      try {
+                        reader.cancel();
+                      } catch (e) {}
+                      return { s, ttfb, kbps: (got / 1024 / dt) * 1000, ok: true };
+                    })
+                    .catch(() => ({ s, ttfb, kbps: 0, ok: true }));
+                })
+                .catch(() => ({ s, ttfb: Infinity, kbps: 0, ok: false }));
+            };
+
+            const probes = PY.sources.map(measure);
 
             Promise.all(probes)
               .then((res) => {
-                const alive = res.filter((r) => r.ok).map((r) => r.s);
-                const order = alive.length ? alive.concat(PY.sources.filter((s) => !alive.includes(s))) : PY.sources;
+                /* 排序：先看连通，再按 ttfb + 吞吐折算的综合分。
+                   吞吐折算成「拉完整个包要多久」，和 ttfb 同一量纲才好比。 */
+                const score = (r) => {
+                  if (!r.ok) return Infinity;
+                  const fullSec = r.kbps > 0 ? PY.bytes / 1024 / r.kbps : 0;
+                  return r.ttfb + fullSec * 1000 * 0.6;
+                };
+                const ranked = res.slice().sort((a, b) => score(a) - score(b));
+                const alive = ranked.filter((r) => r.ok).map((r) => r.s);
+                const dead = PY.sources.filter((s) => !alive.includes(s));
+                const order = alive.concat(dead);
+
+                /* 把测速结果打出来：用户知道为什么选这条，
+                   下次网变了也能自己换 */
+                ranked.forEach((r) => {
+                  const mark = r.s === order[0] ? ' <span class="u">← fastest</span>' : '';
+                  const line = r.ok
+                    ? `${String(Math.round(r.ttfb)).padStart(5)} ms  ${r.kbps > 0 ? (r.kbps / 1024).toFixed(1) + ' MB/s' : '   n/a  '}`
+                    : '<span class="err">unreachable</span>';
+                  print(`<span class="dim">  ${esc(padW(r.s.label, 14))}</span>${line}${mark}`);
+                });
+
+                if (!alive.length) {
+                  print(`<span class="err">py: every source is unreachable</span>`);
+                  state.pyBusy = false;
+                  return null;
+                }
+
                 const pick = order[0];
+                print('');
                 print(`<span class="dim">fetching</span> ${human(PY.bytes)} via ${esc(pick.label)}`);
                 printDim('(first setup only — it stays in this browser)');
                 return tryFetch(order, 0);

@@ -300,21 +300,16 @@ textarea {
   }
 }
 
-/* ---------- 自定义光标：液态玻璃 ----------
-   三层结构，缺一层就不像玻璃了：
+/* ---------- 自定义光标：纯白圆点 ----------
+   试过液态玻璃，观感不对：折射层会把背后的文字搅碎，
+   在深色壁纸上还会泛出一圈脏边。白点最干净，也最像真指针。
 
-     1. 折射层  backdrop-filter 把身后的内容放大并轻微模糊，
-                这是"玻璃"的物理本质——光穿过介质发生偏折。
-     2. 镜面层  两枚 inset 阴影：左上高光、右下投影，
-                模拟球面受光；再叠一道斜向的 specular 亮边。
-     3. 折射边  1px 的亮边 + 内部细密的青色光晕，
-                让边缘有厚度，不是一张贴纸。
+   结构只有两层：
+     #cursor       实心白点，20px，中心始终钉在鼠标坐标上
+     #cursor-ring  链接态的细描边圆，跟手带一点延迟
 
-   颜色全部走 currentColor / var(--cursor)，
-   所以亮暗主题切换时不用维护两套。
-
-   拉伸由 JS 写 --stretch / --shrink / --angle：
-   移动越快，沿运动方向拉长、垂直方向变扁，像一滴被拖动的液滴。 */
+   要改大小只改 #cursor 的 width/height 和 JS 里的 R_DOT 常量
+   （JS 用半径算竖线的两端，两处必须一致）。 */
 
 #cursor,
 #cursor-ring {
@@ -328,178 +323,110 @@ textarea {
      再往上留一档给触摸光晕，两者都不该被应用浮层截断。 */
   z-index: 999999;
   border-radius: 999px;
-  transform: translate(-50%, -50%);
+  /* 拉伸由 JS 写 --stretch / --shrink / --angle：
+     移动越快，沿运动方向拉长、垂直方向变扁，
+     像一颗被拖动的白点。 */
+  transform: translate(-50%, -50%) rotate(var(--angle, 0deg))
+    scale(var(--stretch, 1), var(--shrink, 1));
   will-change: transform, width, height, opacity;
 }
 
-/* 内芯：一颗小玻璃珠 */
+/* 内芯：一颗实心白点。
+   20px 是偏大的一档（macOS 指针约 16px），
+   在暗色背景上足够显眼，又不至于挡住字。 */
 #cursor {
-  width: 9px;
-  height: 9px;
-  background:
-    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.18) 42%, transparent 62%),
-    radial-gradient(circle at 70% 78%, color-mix(in srgb, var(--accent) 55%, transparent), transparent 68%);
-  border: 0.5px solid rgba(255, 255, 255, 0.5);
-  /* 玻璃球的受光：上高光、下反光、外圈一圈淡淡的投影 */
+  width: 20px;
+  height: 20px;
+  background: var(--cursor);
   box-shadow:
-    inset 0 1px 1.5px rgba(255, 255, 255, 0.9),
-    inset 0 -1.5px 2px color-mix(in srgb, var(--accent) 45%, transparent),
-    0 0 10px color-mix(in srgb, var(--accent) 40%, transparent),
-    0 1px 3px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(1.5px) saturate(180%) brightness(1.15);
-  -webkit-backdrop-filter: blur(1.5px) saturate(180%) brightness(1.15);
+    0 0 0 1px rgba(0, 0, 0, 0.16),
+    0 1px 4px rgba(0, 0, 0, 0.28);
   transition:
-    width 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-    height 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-    border-radius 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-    box-shadow 0.32s ease,
-    opacity 0.22s ease;
+    width 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-radius 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.2s ease;
 }
 
-/* 外环：主玻璃体。跟手有延迟，才有"液体被拖着走"的感觉 */
+/* 外环：只服务链接态。idle / text 时完全透明，不参与画面。 */
 #cursor-ring {
   width: 34px;
   height: 34px;
-  border: 1px solid rgba(255, 255, 255, 0.34);
-  /* 折射：放大一点点 + 提高饱和，像透过一颗水滴看世界 */
-  backdrop-filter: blur(0.5px) saturate(190%) brightness(1.08);
-  -webkit-backdrop-filter: blur(0.5px) saturate(190%) brightness(1.08);
-  background:
-    /* 左上高光 */
-    radial-gradient(circle at 30% 26%, rgba(255, 255, 255, 0.4), transparent 46%),
-    /* 右下反光（光线穿过玻璃后的汇聚） */
-    radial-gradient(circle at 68% 74%, color-mix(in srgb, var(--accent) 34%, transparent), transparent 58%),
-    /* 极淡的整体染色，避免完全透明时看不见边界 */
-    radial-gradient(circle, rgba(255, 255, 255, 0.05), transparent 72%);
-  box-shadow:
-    inset 0 0 8px rgba(255, 255, 255, 0.22),
-    inset 0 1px 2px rgba(255, 255, 255, 0.45),
-    inset 0 -2px 5px color-mix(in srgb, var(--accent) 26%, transparent),
-    0 2px 10px rgba(0, 0, 0, 0.28),
-    0 0 16px color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1.5px solid var(--cursor-soft);
   opacity: 0;
-  /* 拉伸直接写进 transform：环体沿运动方向被拉成椭圆，
-     垂直方向收窄，肉眼就觉得它在流动 */
-  transform: translate(-50%, -50%) rotate(var(--angle, 0deg))
-    scale(var(--stretch, 1), var(--shrink, 1)) scale(0.2);
-  transition: opacity 0.28s ease, border-color 0.2s ease, box-shadow 0.3s ease,
-    width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), height 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
-    border-radius 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform: translate(-50%, -50%) scale(0.4);
+  transition:
+    opacity 0.2s ease,
+    transform 0.26s cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 0.2s ease;
 }
 
-/* 玻璃体出现：先放大过冲一点点再回落，水感来自这个回弹 */
-#cursor-ring:not(.is-hidden) {
-  animation: glass-in 0.42s cubic-bezier(0.22, 1.2, 0.36, 1) forwards;
-}
-@keyframes glass-in {
-  0% { opacity: 0; }
-  70% { opacity: 0.92; }
-  100% { opacity: 0.92; }
-}
-
-/* 文本态：玻璃珠压成一根细竖条，环体收小做衬底 */
+/* 文本态：圆点收成一竖条。高度由 JS 写进 --bar-h，
+   跟字号走 —— 在 12px 正文上和在 32px 标题上，
+   竖线该是不一样的长度，写死一个高度永远有一边不合适。 */
 #cursor.is-text {
   width: 2px;
-  height: 20px;
-  border-radius: 2px;
-  background: var(--cursor);
-  border-color: rgba(255, 255, 255, 0.28);
+  height: var(--bar-h, 24px);
+  border-radius: 1px;
+  /* 竖线已经是一条了，再拉长会变成一根针 */
+  transform: translate(-50%, -50%);
   box-shadow:
-    0 0 8px rgba(var(--star), 0.5),
-    0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-#cursor-ring.is-text {
-  width: 20px;
-  height: 26px;
-  border-radius: 7px;
+    0 0 0 0.5px rgba(0, 0, 0, 0.2),
+    0 0 10px rgba(255, 255, 255, 0.35);
 }
 
-/* 链接态：内芯缩到看不见，玻璃环放大成明确的"可点击"信号 */
+/* 链接态：圆点不缩放、不消失，只是旁边多一圈描边。
+   以前把点缩到 scale(0.1)、靠环放大来示意"可点"，
+   结果鼠标在链接上时指针本体反而看不见了 —— 位置感全丢。 */
 #cursor.is-link {
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(0.1);
+  /* 保留实体，只提亮一点 */
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.18),
+    0 1px 4px rgba(0, 0, 0, 0.3),
+    0 0 14px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 #cursor-ring.is-link {
   opacity: 1;
   transform: translate(-50%, -50%) rotate(var(--angle, 0deg))
-    scale(var(--stretch, 1), var(--shrink, 1)) scale(1.16) !important;
-  border-color: color-mix(in srgb, var(--accent) 72%, white 10%);
-  box-shadow:
-    inset 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent),
-    inset 0 1px 2px rgba(255, 255, 255, 0.55),
-    0 3px 14px rgba(0, 0, 0, 0.32),
-    0 0 22px color-mix(in srgb, var(--accent) 42%, transparent);
+    scale(var(--stretch, 1), var(--shrink, 1)) scale(1.16);
+  border-color: color-mix(in srgb, var(--accent) 62%, white 12%);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 #cursor.is-hidden,
 #cursor-ring.is-hidden {
   opacity: 0 !important;
-  transition: opacity 0.18s ease;
+  transition: opacity 0.16s ease;
 }
 
-/* 拖拽中：环体略微放大 + 加重边缘，让"正在抓东西"有实体感 */
-#cursor-ring.is-dragging {
-  border-color: rgba(255, 255, 255, 0.55);
-  box-shadow:
-    inset 0 0 14px rgba(255, 255, 255, 0.28),
-    inset 0 1px 3px rgba(255, 255, 255, 0.6),
-    0 4px 18px rgba(0, 0, 0, 0.4),
-    0 0 26px color-mix(in srgb, var(--accent) 34%, transparent);
-}
-/* 拖拽时环体贴紧内芯，不做拖尾 —— 抓东西的时候不该甩出一条长尾巴。
-   放在 .is-link 之后，靠选择器权重 + !important 压过链接态的放大 */
-#cursor-ring.is-dragging {
-  width: 22px;
-  height: 22px;
-  transition: opacity 0.2s ease, border-color 0.15s ease, box-shadow 0.2s ease,
-    width 0.18s ease, height 0.18s ease;
+/* 拖拽中：圆点略收一点，给"抓住了"的反馈 */
+#cursor.is-dragging {
+  width: 17px;
+  height: 17px;
 }
 
-/* 亮色主题下白色高光会糊掉，换成偏冷的深色描边 + 更强阴影 */
+/* 亮色主题：白点在浅底上看不见，换成深色。
+   --cursor 在 [data-theme='light'] 里已经定义为 #0a0a0a。 */
 [data-theme='light'] #cursor {
-  border-color: rgba(255, 255, 255, 0.85);
   box-shadow:
-    inset 0 1px 1.5px rgba(255, 255, 255, 1),
-    inset 0 -1.5px 2px color-mix(in srgb, var(--accent) 40%, transparent),
-    0 0 8px color-mix(in srgb, var(--accent) 30%, transparent),
-    0 1px 4px rgba(0, 0, 0, 0.28);
-}
-[data-theme='light'] #cursor-ring {
-  border-color: rgba(70, 70, 90, 0.24);
-  background:
-    radial-gradient(circle at 30% 26%, rgba(255, 255, 255, 0.85), transparent 46%),
-    radial-gradient(circle at 68% 74%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 58%),
-    radial-gradient(circle, rgba(255, 255, 255, 0.32), transparent 72%);
-  box-shadow:
-    inset 0 0 8px rgba(255, 255, 255, 0.6),
-    inset 0 1px 2px rgba(255, 255, 255, 0.9),
-    inset 0 -2px 5px color-mix(in srgb, var(--accent) 20%, transparent),
-    0 2px 10px rgba(60, 60, 80, 0.18),
-    0 0 14px color-mix(in srgb, var(--accent) 14%, transparent);
+    0 0 0 1px rgba(255, 255, 255, 0.55),
+    0 1px 4px rgba(0, 0, 0, 0.22);
 }
 
-/* 系统关了动效：玻璃体直接出现，不做回弹，也不做速度拉伸 */
+/* 系统关了动效：不要过渡，也不要拉伸 */
 @media (prefers-reduced-motion: reduce) {
-  #cursor-ring:not(.is-hidden) {
-    animation: none;
-    opacity: 0.92;
+  #cursor,
+  #cursor-ring,
+  #cursor.is-text {
+    transition: none;
   }
-  #cursor-ring {
-    transform: translate(-50%, -50%) scale(1);
+  #cursor,
+  #cursor.is-text,
+  #cursor-ring.is-link {
+    transform: translate(-50%, -50%);
   }
   #cursor-ring.is-link {
-    transform: translate(-50%, -50%) scale(1.16) !important;
-  }
-}
-
-/* 不支持 backdrop-filter 的浏览器（老 Firefox）
-   退化成半透明填充，至少不变成一个看不见的空环 */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  #cursor-ring {
-    background: radial-gradient(circle, rgba(255, 255, 255, 0.16), transparent 72%);
-    border-color: rgba(255, 255, 255, 0.5);
+    transform: translate(-50%, -50%) scale(1.16);
   }
 }
 
@@ -1525,7 +1452,7 @@ textarea {
 }
 
 /* 关机后鼠标指针回到系统样式：桌面已经不存在了，
-   再留一颗玻璃珠子跟着走会很怪 */
+   再留一颗白点跟着走会很怪 */
 .system-halted #cursor,
 .system-halted #cursor-ring {
   display: none;
@@ -1539,71 +1466,59 @@ textarea {
   cursor: pointer;
 }
 
-/* ---------- 长按光晕（触摸设备的右键替代） ----------
+/* ---------- 长按反馈（触摸设备的右键替代） ----------
    手机上没法右键，长按是唯一自然的"次要操作"手势。
    光标本体在 pointer:coarse 时整个模块都不启动，
-   所以这套光晕是独立的一层，不复用 #cursor-ring。
+   所以这套反馈是独立的一层，不复用 #cursor-ring。
 
-   液态玻璃的三件套照旧：backdrop-filter 折射、
-   多层 inset 阴影做受光、1px 亮边做厚度。
-   半径比鼠标环大得多（96px），因为手指比光标粗，
-   小光晕会被指尖整个盖住。 */
+   不用玻璃了，就是一颗放大的白点：从小涨到全尺寸，
+   再往外散开淡出。直径 72px —— 手指比光标粗，
+   太小的反馈会被指尖整个盖住，等于没做。 */
 .touch-halo {
   position: fixed;
   top: 0;
   left: 0;
-  width: 96px;
-  height: 96px;
-  margin: -48px 0 0 -48px;
+  width: 72px;
+  height: 72px;
+  margin: -36px 0 0 -36px;
   border-radius: 999px;
-  /* 比光标低一档：光晕是背景，珠子是主体 */
+  /* 比光标低一档：反馈在底下，指针本体在上 */
   z-index: 999998;
   pointer-events: none;
   opacity: 0;
-  transform: scale(0.35);
-  /* 起手：从指尖炸开，先冲过头再回落，水感来自这个过冲 */
-  transition: transform 0.34s cubic-bezier(0.16, 1.3, 0.3, 1), opacity 0.24s ease;
-  border: 1px solid rgba(255, 255, 255, 0.42);
-  backdrop-filter: blur(3px) saturate(200%) brightness(1.2);
-  -webkit-backdrop-filter: blur(3px) saturate(200%) brightness(1.2);
-  background:
-    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.55), transparent 46%),
-    radial-gradient(circle at 70% 74%, color-mix(in srgb, var(--accent) 46%, transparent), transparent 62%),
-    radial-gradient(circle, rgba(255, 255, 255, 0.08), transparent 74%);
+  transform: scale(0.4);
+  transition: transform 0.26s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.2s ease;
+  background: var(--cursor);
   box-shadow:
-    inset 0 0 18px rgba(255, 255, 255, 0.3),
-    inset 0 2px 4px rgba(255, 255, 255, 0.6),
-    inset 0 -3px 8px color-mix(in srgb, var(--accent) 34%, transparent),
-    0 6px 26px rgba(0, 0, 0, 0.42),
-    0 0 38px color-mix(in srgb, var(--accent) 40%, transparent);
+    0 0 0 1px rgba(0, 0, 0, 0.14),
+    0 0 24px rgba(255, 255, 255, 0.28);
 }
 .touch-halo.show {
-  opacity: 1;
+  opacity: 0.5;
   transform: scale(1);
 }
-/* 松手后往外散掉：不收回原点，而是淡出＋放大，
-   读起来像"这次按下被系统收下了" */
+/* 松手后往外散掉：淡出＋放大，读起来像"这次按下被系统收下了" */
 .touch-halo.release {
-  transform: scale(1.5);
+  transform: scale(1.7);
   opacity: 0;
-  transition: transform 0.42s cubic-bezier(0.2, 0.7, 0.3, 1), opacity 0.42s ease;
+  transition: transform 0.38s cubic-bezier(0.2, 0.7, 0.3, 1), opacity 0.38s ease;
 }
 
-/* 触发瞬间四散的小光点：让"长按成功"有明确的反馈，
+/* 触发瞬间四散的小点：让"长按成功"有明确反馈，
    不然用户不确定是没按准还是没反应 */
 .touch-ripple {
   position: fixed;
   top: 0;
   left: 0;
-  width: 8px;
-  height: 8px;
-  margin: -4px 0 0 -4px;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
   border-radius: 999px;
   z-index: 999998;
   pointer-events: none;
-  background: color-mix(in srgb, var(--accent) 70%, white 30%);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 80%, transparent);
-  animation: rippleOut 0.6s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  background: var(--cursor);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+  animation: rippleOut 0.56s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
 }
 @keyframes rippleOut {
   from {

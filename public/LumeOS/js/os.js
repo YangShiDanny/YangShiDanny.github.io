@@ -166,13 +166,12 @@
        两个事件都喂给同一个处理函数，位置写的是同一个值，重复触发无副作用。 */
     function onMove(e) {
       syncCursor(e);
-      if (e.pointerType) dot.classList.add('is-pointer');
     }
     window.addEventListener('mousemove', onMove, { passive: true });
     window.addEventListener('pointermove', onMove, { passive: true });
 
-    /* 拖拽期间给光标挂个 is-dragging：
-       液态玻璃在快速移动时会拉长，静止时保持圆形。 */
+    /* 拖拽期间给光标挂个 is-dragging：圆点略收一点，表示"抓住了"。
+       不做拉伸 —— 白点被拉长会变成一颗花生。 */
     function setDragging(on) {
       dot.classList.toggle('is-dragging', on);
       ring.classList.toggle('is-dragging', on);
@@ -186,48 +185,86 @@
       ring.classList.add('is-hidden');
     });
 
-    /* 弹簧动画：原来用固定系数 0.2 做指数逼近，手感偏"粘"。
-       改成带速度的弹簧，环体跟手更利落，松手后有一点回弹。 */
+    /* 白点直接钉在鼠标坐标上，不做插值 —— 指针本体必须零延迟。
+       外环跟手带一点滞后（弹簧），移动越快沿运动方向拉得越长。 */
+    let ringX = mx;
+    let ringY = my;
     let vx = 0;
     let vy = 0;
     let lastT = performance.now();
-    (function animate(now) {
+
+    (function followRing(now) {
       const t = now || performance.now();
       /* 按真实帧间隔积分，掉帧时不会突然变慢 */
       const dt = Math.min((t - lastT) / 16.667, 3);
       lastT = t;
 
+      /* 弹簧：0.24 的刚度、0.72 的阻尼。指数逼近太"粘"，
+         带速度的弹簧松手后还会轻轻回弹一下。 */
       const stiffness = 0.24;
       const damping = 0.72;
-      vx = (vx + (mx - rx) * stiffness) * damping;
-      vy = (vy + (my - ry) * stiffness) * damping;
-      rx += vx * dt;
-      ry += vy * dt;
+      vx = (vx + (mx - ringX) * stiffness) * damping;
+      vy = (vy + (my - ringY) * stiffness) * damping;
+      ringX += vx * dt;
+      ringY += vy * dt;
 
-      ring.style.left = rx + 'px';
-      ring.style.top = ry + 'px';
+      ring.style.left = ringX + 'px';
+      ring.style.top = ringY + 'px';
 
-      /* 速度映射成拉伸：动得越快，玻璃拖尾越长。
-         上限压在 1.35，再长就不像玻璃而像橡皮泥了。 */
+      /* 速度映射成拉伸：动得越快，白点沿运动方向越长、垂直方向越扁。
+         上限压住，再长就不像指针而像橡皮泥了。 */
       const speed = Math.min(Math.hypot(vx, vy) / 26, 1);
-      const stretch = 1 + speed * 0.35;
-      const shrink = 1 - speed * 0.14;
+      const stretch = 1 + speed * 0.32;
+      const shrink = 1 - speed * 0.12;
       const angle = (Math.atan2(vy, vx) * 180) / Math.PI;
+      dot.style.setProperty('--stretch', stretch.toFixed(3));
+      dot.style.setProperty('--shrink', shrink.toFixed(3));
+      dot.style.setProperty('--angle', angle.toFixed(1) + 'deg');
       ring.style.setProperty('--stretch', stretch.toFixed(3));
       ring.style.setProperty('--shrink', shrink.toFixed(3));
       ring.style.setProperty('--angle', angle.toFixed(1) + 'deg');
 
-      requestAnimationFrame(animate);
+      requestAnimationFrame(followRing);
     })();
 
-    function setMode(next) {
+    /* 文本态竖线的高度跟着光标底下的字号走。
+       在 12px 正文上竖线和写法一样高，在 32px 标题上就该长一截；
+       写死一个高度永远有一边不对。 */
+    const R_DOT = 10; // 与 CSS #cursor 的 20px/2 对应
+    let barH = 24;
+
+    function measureBar(node) {
+      if (!node || node.nodeType !== 1) return 0;
+      let base = 0;
+      try {
+        const cs = getComputedStyle(node);
+        base = parseFloat(cs.fontSize) || 0;
+      } catch (e) {
+        base = 0;
+      }
+      /* 拿到字号就按 1.35 倍做竖线（行高的手感），
+         拿不到就退回一个跟 20px 圆点相称的默认值 */
+      if (!base) return 0;
+      return Math.round(Math.min(Math.max(base * 1.35, 18), 56));
+    }
+
+    function setBarFor(node) {
+      const next = measureBar(node) || 26;
+      if (next === barH) return;
+      barH = next;
+      dot.style.setProperty('--bar-h', barH + 'px');
+    }
+
+    function setMode(next, node) {
+      /* 进了文本态就把 cursor 底下那个元素量一下字号，
+         竖线该多长跟着字走 —— 标题里和正文里不该一样长。 */
+      if (next === 'text') setBarFor(node);
       if (next === mode) return;
       mode = next;
       dot.classList.toggle('is-text', next === 'text');
       dot.classList.toggle('is-link', next === 'link');
       ring.classList.toggle('is-link', next === 'link');
-      /* 文本态环体要收成小圆角方块（见 CSS #cursor-ring.is-text），
-         漏了这行环体就永远是圆的、跟内芯对不上 */
+      /* 环只在链接态出现，文本态/idle 态保持透明（见 CSS #cursor-ring） */
       ring.classList.toggle('is-text', next === 'text');
     }
 
@@ -269,14 +306,24 @@
     /* 光标本体 pointer-events:none，e.target 始终是它底下的真实元素 */
     window.addEventListener(
       'mousemove',
-      (e) => setMode(modeFor(e.target)),
+      (e) => setMode(modeFor(e.target), e.target),
       { passive: true }
     );
-    document.addEventListener('mouseover', (e) => setMode(modeFor(e.target)));
+    window.addEventListener(
+      'pointermove',
+      (e) => setMode(modeFor(e.target), e.target),
+      { passive: true }
+    );
+    document.addEventListener('mouseover', (e) => setMode(modeFor(e.target), e.target));
     /* 拖拽/滚动/内容变化后指针不动也要刷新状态 */
-    window.addEventListener('scroll', () => setMode(modeFor(document.elementFromPoint(mx, my))), {
-      passive: true
-    });
+    window.addEventListener(
+      'scroll',
+      () => {
+        const t = document.elementFromPoint(mx, my);
+        setMode(modeFor(t), t);
+      },
+      { passive: true }
+    );
   })();
 
   /* -------------------------------------------------------- */
@@ -1548,7 +1595,7 @@
       return halo;
     }
 
-    /* 光晕：指尖下方炸开一颗玻璃球，再撒一圈小光点。
+    /* 反馈：指尖下方涨开一颗白点，再撒一圈小点。
        小光点用 8 个方向 + 随机半径，比正圆扩散更像"溅开"。 */
     function showHalo(x, y) {
       const h = ensureHalo();
@@ -1604,7 +1651,7 @@
       const y = origin.y;
       showHalo(x, y);
 
-      /* 菜单要在光晕之后一点点出来：先看到玻璃球，
+      /* 菜单要在光晕之后一点点出来：先看到白点，
          再看到菜单，顺序对了才像"系统响应了长按" */
       setTimeout(() => {
         if (t) openCtxAt(t, x, y);
