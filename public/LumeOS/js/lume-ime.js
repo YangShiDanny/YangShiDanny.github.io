@@ -1,8 +1,23 @@
 /* ============================================================
    LumeIME — LumeOS 内置输入法
    全拼 · 简拼 · 智能切分整句 · 词频排序 · 用户词自学习 · 独立 Shift 切换中/英
-   词库：rime-ice（雾凇拼音）预编译为 assets/ime-dict.json，
-   按拼音前缀二分查找，首次进入中文模式时懒加载。
+
+   词库：rime-ice（雾凇拼音）经 scripts/build-ime-dict.cjs 预编译成
+   assets/ime-dict.txt —— 紧凑行文本，两段以空行分隔：
+
+     #LUMEIME1
+     <拼音>\t<词>:<频>,<词>:<频>,...
+     …
+     (空行)
+     <简拼>\t<词>:<频>,...
+
+   为什么不用 JSON：原来 1.32MB 的二维数组光是 JSON.parse 就要 ~50ms，
+   加载完还得再扫 4.8 万条建简拼索引、又是 ~140ms，近 200ms 全堵在启动上。
+   换成行文本后：一次 split('\n') 约 27ms，且**只做一次**；
+   真正用到的只是"某个前缀命中的那几行"，按需 split 才 0.05–8ms。
+   体积也从 1.32MB/gzip 499KB 降到 0.62MB/gzip 275KB。
+
+   两级数组结构（body / iniBody）都是字典序，查询靠二分。
    ============================================================ */
 (function () {
   'use strict';
@@ -10,7 +25,7 @@
   var PAGE = 9;            // 候选栏一次显示 9 个（数字键直选）
   var MAX_SCAN = 6000;     // 前缀扫描上限，防止极端缓冲卡顿
   var MAX_SYLLABLE = 6;    // 单个拼音音节的搜索上限
-  var DICT_URL = 'assets/ime-dict.json';
+  var DICT_URL = 'assets/ime-dict.txt';
   var LS_MODE = 'lume.ime.mode';
   var LS_ON = 'lume.ime.on';
   var LS_USER = 'lume.ime.user';
@@ -28,7 +43,8 @@
     ready: false
   };
 
-  var dictRows = null;   // [pinyinKey, word, freq]，按 key 字典序
+  var dictRows = null;   // 主词库行：每项是 "拼音\t词:频,词:频"，字典序
+  var iniRows = null;    // 简拼行：每项是 "简拼\t词:频,..."，字典序
   var bar = null;        // 候选栏 DOM
   var chip = null;       // 菜单栏 中/EN 指示
   var kbBtn = null;      // 菜单栏键盘开关
@@ -61,7 +77,7 @@
   }
 
   /* ---------- 词库 ---------- */
-  var SYLLABLES = null;   // Set：合法完整拼音音节（由单字条目反推）
+  var SYLLABLES = null;   // 合法完整拼音音节表（文件头部一行，空格分隔）
   var sylCache = Object.create(null);
   var cacheKeys = 0;
 
@@ -69,19 +85,30 @@
     if (dictRows || state.loading) return;
     state.loading = true;
     fetch(DICT_URL)
-      .then(function (r) { return r.json(); })
-      .then(function (rows) {
-        dictRows = rows;
-        buildSyllables();
+      .then(function (r) { return r.text(); })
+      .then(function (text) {
+        /* 一次切分拿到全部行；两段之间用空行隔开。
+           split 出来的量级是 2 万行，比 JSON.parse 快且不需要建对象。 */
+        var parts = text.split('\n\n');
+        var body = parts[0].split('\n');
+        if (body[0].charAt(0) === '#') body.shift();   // 去掉 #LUMEIME1 魔数行
+
+        /* 紧跟着的一行是完整音节表（空格分隔）。它来自裁词库**之前**的
+           全量数据，所以含 weng/zhuai/pie 这些冷僻音节——
+           整句切分必须靠它，缺一个音节就会有一串拼音切不开。 */
+        SYLLABLES = Object.create(null);
+        if (body.length) {
+          var syls = body.shift().split(' ');
+          for (var i = 0; i < syls.length; i++) if (syls[i]) SYLLABLES[syls[i]] = true;
+        }
+
+        if (body.length && body[body.length - 1] === '') body.pop();
+        dictRows = body;
+        iniRows = parts[1] ? parts[1].split('\n').filter(Boolean) : [];
+
         state.ready = true;
         state.loading = false;
         if (state.buf) refresh();
-
-        /* 简拼索引只建一次，但要扫 4 万条、约 140ms。
-           绝不能等用户打字时再建（那一下会卡住按键），
-           所以词库一到就丢到空闲帧去预建。 */
-        var idle = window.requestIdleCallback || function (fn) { return setTimeout(fn, 300); };
-        idle(function () { buildInitialIndex(); });
       })
       .catch(function () {
         state.loading = false;
@@ -89,13 +116,11 @@
       });
   }
 
-  /* 单字条目的 key 一定是完整音节（a / ai / zhuang…），拿来当切分字典 */
-  function buildSyllables() {
-    var s = Object.create(null);
-    for (var i = 0; i < dictRows.length; i++) {
-      if (dictRows[i][1].length === 1) s[dictRows[i][0]] = true;
-    }
-    SYLLABLES = s;
+  /* 取一行的拼音部分（\t 之前）。二分和前缀比较都靠它。
+     行格式固定，用 indexOf 比 split 快得多，热路径上按需调用。 */
+  function rowKey(line) {
+    var t = line.indexOf('\t');
+    return t < 0 ? line : line.slice(0, t);
   }
 
   /* 二分找第一个 >= key 的行下标 */
@@ -103,10 +128,26 @@
     var lo = 0, hi = dictRows.length;
     while (lo < hi) {
       var m = (lo + hi) >> 1;
-      if (dictRows[m][0] < key) lo = m + 1;
+      if (rowKey(dictRows[m]) < key) lo = m + 1;
       else hi = m;
     }
     return lo;
+  }
+
+  /* 把 "<词>:<频>,<词>:<频>" 解析成 {w, fr} 数组。
+     每段的格式是「词 冒号 频次」，所以冒号前是词、冒号后是频次。
+     频次是构建期做过对数压缩的档位值，排序只需要大小关系，不需要原值。 */
+  function parseWords(tail) {
+    var out = [];
+    var segs = tail.split(',');
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i];
+      if (!s) continue;
+      var c = s.lastIndexOf(':');
+      if (c < 0) { out.push({ w: s, fr: 0 }); continue; }
+      out.push({ w: s.slice(0, c), fr: +s.slice(c + 1) || 0 });
+    }
+    return out;
   }
 
   function cached(key) {
@@ -121,15 +162,22 @@
     var seen = Object.create(null);
     var out = [];
     for (var i = lo; i < dictRows.length; i++) {
-      var row = dictRows[i];
-      if (row[0].slice(0, key.length) !== key) break;
-      var w = row[1];
-      if (seen[w] !== undefined) {
-        if (row[2] > seen[w].fr) seen[w].fr = row[2];
-        continue;
+      var line = dictRows[i];
+      var k = rowKey(line);
+      if (k.slice(0, key.length) !== key) break;
+      /* 命中行才解析：这正是"按需"的收益所在，
+         一次前缀查询通常只碰 1–5 行。 */
+      var words = parseWords(line.slice(k.length + 1));
+      for (var j = 0; j < words.length; j++) {
+        var w = words[j].w;
+        var fr = words[j].fr;
+        if (seen[w] !== undefined) {
+          if (fr > seen[w].fr) seen[w].fr = fr;
+          continue;
+        }
+        seen[w] = { w: w, fr: fr, u: userFreq[w] || 0, exact: k === key ? 1 : 0 };
+        out.push(seen[w]);
       }
-      seen[w] = { w: w, fr: row[2], u: userFreq[w] || 0, exact: row[0] === key ? 1 : 0 };
-      out.push(seen[w]);
       if (out.length >= MAX_SCAN) break;
     }
     out.sort(function (a, b) {
@@ -168,38 +216,27 @@
     return out.join('');
   }
 
-  var initialCache = Object.create(null);   // 首字母串 → { word: bestRow }
-  var initialBuilt = false;
-
-  function buildInitialIndex() {
-    if (initialBuilt || !dictRows) return;
-    initialBuilt = true;
-    for (var i = 0; i < dictRows.length; i++) {
-      var row = dictRows[i];
-      if (row[1].length < 2) continue;        // 简拼只对词组有意义
-      var ini = initialsOf(row[0]);
-      if (!ini || ini.length < 2 || ini.length > 10) continue;
-      var bucket = initialCache[ini];
-      if (!bucket) bucket = initialCache[ini] = Object.create(null);
-      var prev = bucket[row[1]];
-      if (!prev || row[2] > prev.fr) bucket[row[1]] = { w: row[1], fr: row[2] };
-    }
-  }
-
-  /* 简拼候选：缓冲长度 >= 2 且全拼命中少时启用 */
+  /* 简拼：直接二分查文件第二段里预建好的简拼表。
+     这里原先是"扫全库 4.8 万条 → 建 首字母串→词 的索引"，光这一步就 ~140ms，
+     而且必须丢到空闲帧去做、没建好前简拼不可用。
+     现在构建期已经算好并按字典序排进文件，运行时只差一次二分。 */
   function lookupInitials(buf) {
-    /* 索引还没建好就先跳过这次简拼，绝不在按键路径上同步扫全库。
-       空闲预建完成后，下一次按键自然就有简拼了。 */
-    if (!initialBuilt) {
-      var idle = window.requestIdleCallback || function (fn) { return setTimeout(fn, 0); };
-      idle(function () { buildInitialIndex(); });
-      return [];
+    if (!iniRows) return [];
+    var lo = 0, hi = iniRows.length;
+    while (lo < hi) {
+      var m = (lo + hi) >> 1;
+      if (rowKey(iniRows[m]) < buf) lo = m + 1;
+      else hi = m;
     }
-    var bucket = initialCache[buf];
-    if (!bucket) return [];
+    if (lo >= iniRows.length) return [];
+    var line = iniRows[lo];
+    if (rowKey(line) !== buf) return [];      // 简拼必须整串精确命中
+
+    var words = parseWords(line.slice(line.indexOf('\t') + 1));
     var out = [];
-    for (var w in bucket) {
-      out.push({ w: w, fr: bucket[w].fr, u: userFreq[w] || 0, ini: true });
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i].w;
+      out.push({ w: w, fr: words[i].fr, u: userFreq[w] || 0, ini: true });
     }
     out.sort(function (a, b) { return (b.u - a.u) || (b.fr - a.fr); });
     return out.slice(0, 60);

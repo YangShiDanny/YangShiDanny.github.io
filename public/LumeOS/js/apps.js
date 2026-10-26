@@ -9,6 +9,34 @@ const esc = (s) =>
 const pad = (s, n) => String(s) + ' '.repeat(Math.max(0, n - String(s).length));
 const fmtSize = (n) => (n < 1024 ? n + ' B' : (n / 1024).toFixed(1) + ' K');
 
+/* 中文/全角字符在等宽字体里占两格，而 pad() 是按 JS 字符数算的，
+   所以纯空格对齐一到中文就歪。这里按"显示宽度"算：
+   全角（CJK、全角标点等）记 2，其余记 1。 */
+const dispWidth = (s) =>
+  Array.from(String(s)).reduce((w, ch) => {
+    const cp = ch.codePointAt(0);
+    /* 常用全角区间：CJK 统一表意、扩展 A、兼容表意、全角标点/字母、假名、谚文 */
+    const wide =
+      (cp >= 0x1100 && cp <= 0x115f) ||
+      (cp >= 0x2e80 && cp <= 0x303e) ||
+      (cp >= 0x3041 && cp <= 0x33ff) ||
+      (cp >= 0x3400 && cp <= 0x4dbf) ||
+      (cp >= 0x4e00 && cp <= 0x9fff) ||
+      (cp >= 0xa000 && cp <= 0xa4cf) ||
+      (cp >= 0xac00 && cp <= 0xd7a3) ||
+      (cp >= 0xf900 && cp <= 0xfaff) ||
+      (cp >= 0xfe30 && cp <= 0xfe6f) ||
+      (cp >= 0xff00 && cp <= 0xff60) ||
+      (cp >= 0xffe0 && cp <= 0xffe6);
+    return w + (wide ? 2 : 1);
+  }, 0);
+
+/* 按显示宽度补空格，给终端里需要成列的输出用 */
+const padW = (s, n) => {
+  const str = String(s);
+  return str + ' '.repeat(Math.max(0, n - dispWidth(str)));
+};
+
 /* ---------------------------------------------------------- */
 /*  Terminal                                                   */
 /* ---------------------------------------------------------- */
@@ -91,7 +119,11 @@ const TerminalApp = {
           ['exit', 'close this window']
         ];
         printDim('available commands');
-        rows.forEach(([cmd, desc]) => print(`  <span class="u">${pad(cmd, 22)}</span><span class="dim">${esc(desc)}</span>`));
+        /* 用按显示宽度补的 padW：描述里带中文时也不会把整列顶歪。
+           列宽 26 是按最长那条（lume <run|build> <file>，23 格）留出的余量。 */
+        rows.forEach(([cmd, desc]) =>
+          print(`  <span class="u">${esc(padW(cmd, 26))}</span><span class="dim">${esc(desc)}</span>`)
+        );
         print('');
       },
 
@@ -147,9 +179,9 @@ const TerminalApp = {
         if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
           printDim(`lume ${window.LumeVM ? LumeVM.version : '0.2.0'}  ·  in-browser subset`);
           print('');
-          print(`  <span class="u">${pad('lume run <file>', 22)}</span><span class="dim">解释执行，打印 say 的输出</span>`);
-          print(`  <span class="u">${pad('lume build <file>', 22)}</span><span class="dim">生成 &lt;stem&gt;.c 写进工作目录</span>`);
-          print(`  <span class="u">${pad('lume help', 22)}</span><span class="dim">this list</span>`);
+          print(`  <span class="u">${esc(padW('lume run <file>', 22))}</span><span class="dim">解释执行，打印 say 的输出</span>`);
+          print(`  <span class="u">${esc(padW('lume build <file>', 22))}</span><span class="dim">生成 &lt;stem&gt;.c 写进工作目录</span>`);
+          print(`  <span class="u">${esc(padW('lume help', 22))}</span><span class="dim">this list</span>`);
           print('');
           printDim('浏览器里没有 clang，run 走的是同一棵 AST 的求值器；');
           printDim('要真的编译成可执行文件，用仓库里的 cargo：');
