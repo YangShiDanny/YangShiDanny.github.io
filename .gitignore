@@ -2,6 +2,9 @@
 dist/
 # generated types
 .astro/
+# 构建期生成（scripts/build-version.cjs），版本号随 commit 变，
+# 提交进去立刻就是"过期"状态，由 CI/本地构建重新生成
+public/LumeOS/version.json
 
 # dependencies
 node_modules/

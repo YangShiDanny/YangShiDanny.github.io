@@ -20,6 +20,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 必须拉全历史：build-version.cjs 用 git log 数 commit 来定 patch 号，
+          # 默认 fetch-depth: 1 会让它永远是 0，版本号就不随 commit 变了。
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -30,9 +34,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 版本号必须在构建**之前**生成：
+      #   1. astro build 会把 public/ 原样拷进 dist/，version.json 得先存在；
+      #   2. 它读 git HEAD，所以 checkout 之后、且 fetch-depth 要够。
+      # 注意 actions/checkout 默认 fetch-depth: 1（浅克隆），
+      # git log 数不出 commit 数，patch 会永远算成 0 —— 那样每次发布
+      # 版本号都不变，缓存永远命中，用户就再也拿不到更新。所以下面
+      # checkout 改成 fetch-depth: 0。
+      - name: Stamp build version
+        run: node scripts/build-version.cjs
+
       # 直接用 bin 调用，绕过 package.json 里本机专用的 /usr/bin/node 硬编码
       - name: Build site
         run: ./node_modules/.bin/astro build
+
+      - name: Verify version.json shipped
+        run: |
+          test -f dist/LumeOS/version.json || { echo "version.json missing from dist"; exit 1; }
+          cat dist/LumeOS/version.json
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
