@@ -129,24 +129,84 @@
     let ry = my;
     let mode = 'idle';
 
-    window.addEventListener('mousemove', (e) => {
+    /* 既听 mousemove 也听 pointermove，看似重复，其实是必要的：
+       拖窗口 / 拖右下角缩放走的是 pointermove（pointerdown + setPointerCapture
+       那套），而在拖拽期间浏览器不保证同步派发 mousemove——
+       结果就是窗口跟着走了、光标却钉在原地。
+       两个事件都喂给同一个处理函数，位置写的是同一个值，重复触发无副作用。 */
+    function onMove(e) {
       mx = e.clientX;
       my = e.clientY;
       dot.style.left = mx + 'px';
       dot.style.top = my + 'px';
       dot.classList.remove('is-hidden');
       ring.classList.remove('is-hidden');
-    });
+      if (e.pointerType) dot.classList.add('is-pointer');
+    }
+    window.addEventListener('mousemove', onMove, { passive: true });
+    window.addEventListener('pointermove', onMove, { passive: true });
+
+    /* 拖拽期间给光标挂个 is-dragging：
+       液态玻璃在快速移动时会拉长，静止时保持圆形。 */
+    function setDragging(on) {
+      dot.classList.toggle('is-dragging', on);
+      ring.classList.toggle('is-dragging', on);
+    }
+    window.addEventListener('pointerdown', () => setDragging(true), { passive: true });
+    window.addEventListener('pointerup', () => setDragging(false), { passive: true });
+    window.addEventListener('pointercancel', () => setDragging(false), { passive: true });
+
     document.addEventListener('mouseleave', () => {
       dot.classList.add('is-hidden');
       ring.classList.add('is-hidden');
     });
 
-    (function animate() {
-      rx += (mx - rx) * 0.2;
-      ry += (my - ry) * 0.2;
+    /* 拖拽 / 缩放期间，指针可能移出窗口甚至移出浏览器（setPointerCapture
+       让事件继续派发，但不保证 mousemove 同步）。所以这两处除了 pointermove
+       之外，还要主动把最新坐标写回光标，双保险。 */
+    function syncCursor(ev) {
+      if (!ev || ev.clientX == null) return;
+      mx = ev.clientX;
+      my = ev.clientY;
+      dot.style.left = mx + 'px';
+      dot.style.top = my + 'px';
+      dot.classList.remove('is-hidden');
+      ring.classList.remove('is-hidden');
+    }
+    /* 挂到 window 上供窗口拖拽 / 缩放调用（见下方 dragWin / resizeWin） */
+    window.__lumeCursorSync = syncCursor;
+
+    /* 弹簧动画：原来用固定系数 0.2 做指数逼近，手感偏"粘"。
+       改成带速度的弹簧，环体跟手更利落，松手后有一点回弹。 */
+    let vx = 0;
+    let vy = 0;
+    let lastT = performance.now();
+    (function animate(now) {
+      const t = now || performance.now();
+      /* 按真实帧间隔积分，掉帧时不会突然变慢 */
+      const dt = Math.min((t - lastT) / 16.667, 3);
+      lastT = t;
+
+      const stiffness = 0.24;
+      const damping = 0.72;
+      vx = (vx + (mx - rx) * stiffness) * damping;
+      vy = (vy + (my - ry) * stiffness) * damping;
+      rx += vx * dt;
+      ry += vy * dt;
+
       ring.style.left = rx + 'px';
       ring.style.top = ry + 'px';
+
+      /* 速度映射成拉伸：动得越快，玻璃拖尾越长。
+         上限压在 1.35，再长就不像玻璃而像橡皮泥了。 */
+      const speed = Math.min(Math.hypot(vx, vy) / 26, 1);
+      const stretch = 1 + speed * 0.35;
+      const shrink = 1 - speed * 0.14;
+      const angle = (Math.atan2(vy, vx) * 180) / Math.PI;
+      ring.style.setProperty('--stretch', stretch.toFixed(3));
+      ring.style.setProperty('--shrink', shrink.toFixed(3));
+      ring.style.setProperty('--angle', angle.toFixed(1) + 'deg');
+
       requestAnimationFrame(animate);
     })();
 
@@ -156,6 +216,9 @@
       dot.classList.toggle('is-text', next === 'text');
       dot.classList.toggle('is-link', next === 'link');
       ring.classList.toggle('is-link', next === 'link');
+      /* 文本态环体要收成小圆角方块（见 CSS #cursor-ring.is-text），
+         漏了这行环体就永远是圆的、跟内芯对不上 */
+      ring.classList.toggle('is-text', next === 'text');
     }
 
     /* 元素自身是否直接含可见文字（不含子元素里的文字） */
@@ -344,6 +407,12 @@
     }
   }
 
+  /* -------------------------------------------------------- */
+  /*  光标坐标桥                                                */
+  /*  光标模块（上层 IIFE）把 syncCursor 挂到 window 上，          */
+  /*  拖拽 / 缩放才能主动喂坐标。模块加载顺序无关，用可选调用。  */
+  /* -------------------------------------------------------- */
+
   function dragWin(win, event) {
     if (win.max || event.button !== 0) return;
     const node = win.el;
@@ -353,8 +422,20 @@
     const offY = event.clientY - rect.top;
 
     node.classList.add('dragging');
+    /* 捕获指针：鼠标快速甩出窗口也不会丢事件，
+       拖动大窗口时指针常常跑到标题栏外面 */
+    if (node.setPointerCapture && event.pointerId != null) {
+      try {
+        node.setPointerCapture(event.pointerId);
+      } catch (err) {
+        /* 某些浏览器对非活动指针会抛错，忽略即可 */
+      }
+    }
 
     function move(ev) {
+      /* 光标先跟着走，再算窗口位置：万一后面的钳制逻辑抛错，
+         至少指针不会脱手 */
+      if (window.__lumeCursorSync) window.__lumeCursorSync(ev);
       let x = ev.clientX - area.left - offX;
       let y = ev.clientY - area.top - offY;
       x = Math.min(Math.max(x, -rect.width + 140), area.width - 140);
@@ -366,9 +447,11 @@
       node.classList.remove('dragging');
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
     }
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   }
 
   function resizeWin(win, event) {
@@ -377,15 +460,18 @@
     const rect = node.getBoundingClientRect();
 
     function move(ev) {
+      if (window.__lumeCursorSync) window.__lumeCursorSync(ev);
       node.style.width = Math.max(340, ev.clientX - rect.left) + 'px';
       node.style.height = Math.max(220, ev.clientY - rect.top) + 'px';
     }
     function up() {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
     }
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   }
 
   function openApp(appId, opts) {
