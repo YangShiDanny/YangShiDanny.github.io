@@ -762,12 +762,14 @@ const EditorApp = {
           <span class="lang" hidden>txt</span>
           <span class="spacer"></span>
           <span class="words">0 words</span>
+          <button class="editor-btn" type="button" data-act="preview" title="Toggle preview (⌘⇧V)" hidden>Preview</button>
           <button class="editor-btn run" type="button" data-act="run" title="Run (⌘⏎)" hidden>Run</button>
           <button class="editor-btn primary" type="button" data-act="save" title="Save (⌘S)">Save</button>
         </div>
         <div class="editor-wrap">
           <pre class="editor-code" aria-hidden="true" hidden><code></code></pre>
           <textarea class="editor-area" spellcheck="false" wrap="off" aria-label="Editor"></textarea>
+          <div class="editor-md" hidden></div>
         </div>
         <div class="editor-out" hidden>
           <div class="editor-out-bar">
@@ -788,6 +790,8 @@ const EditorApp = {
     const fileLabel = body.querySelector('.editor-bar .file');
     const words = body.querySelector('.editor-bar .words');
     const runBtn = body.querySelector('[data-act="run"]');
+    const previewBtn = body.querySelector('[data-act="preview"]');
+    const mdView = body.querySelector('.editor-md');
     const outPanel = body.querySelector('.editor-out');
     const outMeta = body.querySelector('.editor-out-bar .meta');
     const outBody = body.querySelector('.editor-out-body');
@@ -802,14 +806,38 @@ const EditorApp = {
 
     const ext = path ? extOf(path) : '';
     const isLume = ext === 'lume';
-    const syntax = !!(path && window.LumeHighlight && LumeHighlight.isLume(path));
+    const isMd = !!(window.LumeMarkdown && (LumeMarkdown.isMarkdown(path) || window.LumeMarkdown.isMarkdown('.' + ext)));
+    /* .lume 走 Lume 高亮，.md 走 Markdown 高亮，都是「pre 上色 + textarea 透明」双图层 */
+    const syntax = !!(path && window.LumeHighlight && LumeHighlight.isLume(path)) || isMd;
+    let previewing = false;
 
-    /* .lume 文件走语法高亮：文字画在下面的 <pre> 里，textarea 只负责输入和光标 */
     const paint = () => {
       if (!syntax) return;
-      codeEl.innerHTML = LumeHighlight.render(area.value);
+      codeEl.innerHTML = isMd && window.LumeMarkdown ? LumeMarkdown.render(area.value) : LumeHighlight.render(area.value);
       codeBox.scrollTop = area.scrollTop;
       codeBox.scrollLeft = area.scrollLeft;
+    };
+
+    /* Markdown 预览：直接把编辑器换成渲染结果，再点一次切回来 */
+    const renderPreview = () => {
+      if (!isMd || !window.LumeMarkdown) return;
+      mdView.innerHTML = LumeMarkdown.toHTML(area.value);
+    };
+
+    const setPreview = (on) => {
+      if (!isMd) return;
+      previewing = on;
+      mdView.hidden = !on;
+      area.hidden = on;
+      codeBox.hidden = on || !syntax;
+      wrap.classList.toggle('previewing', on);
+      previewBtn.classList.toggle('on', on);
+      previewBtn.textContent = on ? 'Edit' : 'Preview';
+      if (on) renderPreview();
+      else {
+        paint();
+        area.focus();
+      }
     };
 
     const sync = () => {
@@ -836,6 +864,7 @@ const EditorApp = {
       langTag.dataset.kind = KIND[ext] || 'text';
     }
     runBtn.hidden = !isLume;
+    previewBtn.hidden = !isMd;
 
     const save = () => {
       if (!path) {
@@ -891,6 +920,10 @@ const EditorApp = {
         e.preventDefault();
         run();
       }
+      if (mod && e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault();
+        setPreview(!previewing);
+      }
     });
 
     /* 右键菜单：运行 / 保存 + 剪贴板。自己接管，别漏给浏览器 */
@@ -911,6 +944,15 @@ const EditorApp = {
       };
 
       const items = [];
+      if (isMd) {
+        items.push({
+          ico: 'editor',
+          label: previewing ? 'Edit Markdown' : 'Preview Markdown',
+          hint: '⌘⇧V',
+          run: () => setPreview(!previewing)
+        });
+        items.push('|');
+      }
       if (isLume) items.push({ ico: 'run', label: 'Run File', hint: '⌘⏎', run: run });
       items.push({ ico: 'save', label: 'Save', hint: '⌘S', run: save });
       items.push('|');
@@ -937,13 +979,14 @@ const EditorApp = {
 
     body.querySelector('[data-act="save"]').addEventListener('click', save);
     runBtn.addEventListener('click', run);
+    previewBtn.addEventListener('click', () => setPreview(!previewing));
     body.querySelector('[data-act="close-out"]').addEventListener('click', () => {
       outPanel.hidden = true;
     });
 
     /* 自动缩进 / 括号配对 / 关键字补全（.lume 才启用代码行为） */
     if (window.LumeEdit) {
-      LumeEdit.attach({ area, wrap, lang: isLume ? 'lume' : 'text' });
+      LumeEdit.attach({ area, wrap, lang: isLume ? 'lume' : isMd ? 'md' : 'text' });
     }
 
     sync();
@@ -1116,10 +1159,172 @@ Memory     ${esc(info.memory)}</div>
   }
 };
 
+/* ---------------------------------------------------------- */
+/*  Tips                                                      */
+/* ---------------------------------------------------------- */
+const TIPS = [
+  {
+    k: 'Window',
+    rows: [
+      ['⌘K', 'Spotlight — jump to any app or file'],
+      ['Drag', 'Move a window by its titlebar'],
+      ['Double-click', 'The titlebar to maximize / restore'],
+      ['Right-click', 'A Dock icon for New Window / Show All'],
+      ['Drag on desktop', 'Rubber-band select multiple icons']
+    ]
+  },
+  {
+    k: 'Editor',
+    rows: [
+      ['⌘S', 'Save the current file'],
+      ['⌘⇧V', 'Toggle Markdown preview'],
+      ['⌘/', 'Toggle line comment (Lume)'],
+      ['Tab / ⇧Tab', 'Indent or outdent the selection'],
+      ['( [ { " \'', 'Closes itself; Backspace deletes the pair']
+    ]
+  },
+  {
+    k: 'Input',
+    rows: [
+      ['Shift', 'Switch Chinese / English'],
+      ['Space', 'Commit the highlighted candidate'],
+      ['1–9', 'Pick a candidate directly'],
+      ['= / -', 'Next / previous candidate page'],
+      ['⌨ tray icon', 'On-screen keyboard for touch or no-IME setups']
+    ]
+  },
+  {
+    k: 'Shell',
+    rows: [
+      ['help', 'List every command'],
+      ['ls · cd · cat', 'Browse the pretend filesystem'],
+      ['neofetch', 'System summary'],
+      ['clear', 'Wipe the terminal']
+    ]
+  }
+];
+
+const TipsApp = {
+  id: 'tips',
+  name: 'Tips',
+  icon: 'info',
+  width: 560,
+  height: 520,
+  transient: true,   /* 不在 Dock 固定，只在菜单栏入口开窗 */
+
+  mount(body) {
+    body.innerHTML = `
+      <div class="tips-doc">
+        <div class="tips-head">
+          <h2>Quick tips</h2>
+          <p>The short version of everything that is not obvious.</p>
+        </div>
+        ${TIPS.map(
+          (g) => `
+          <section class="tips-group">
+            <h3>${esc(g.k)}</h3>
+            <dl>
+              ${g.rows
+                .map(
+                  ([key, text]) =>
+                    `<dt><kbd>${esc(key)}</kbd></dt><dd>${esc(text)}</dd>`
+                )
+                .join('')}
+            </dl>
+          </section>`
+        ).join('')}
+      </div>`;
+  }
+};
+
+/* ---------------------------------------------------------- */
+/*  Licence                                                   */
+/* ---------------------------------------------------------- */
+const LicenceApp = {
+  id: 'licence',
+  name: 'Licence',
+  icon: 'about',
+  width: 620,
+  height: 540,
+  transient: true,
+
+  mount(body) {
+    body.innerHTML = `
+      <div class="lic-doc">
+        <div class="lic-head">
+          <h2>Licence &amp; credits</h2>
+          <p>This site and LumeOS are personal work, shared so others can read the source.</p>
+        </div>
+
+        <section>
+          <h3>Website content</h3>
+          <p>
+            The text, layout and images of this site are
+            <b>© ${new Date().getFullYear()} Yangshi</b>, all rights reserved.
+            You are welcome to read, quote with a link back, or learn from the code.
+            Please do not republish the writing or the visual design as your own.
+          </p>
+        </section>
+
+        <section>
+          <h3>LumeOS source</h3>
+          <p>
+            The LumeOS code (HTML / CSS / JavaScript under
+            <code>/LumeOS</code>) is released under the
+            <b>MIT Licence</b>. Use it, fork it, ship it — just keep the
+            copyright notice:
+          </p>
+          <pre class="lic-legal">MIT License
+
+Copyright (c) ${new Date().getFullYear()} Yangshi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+        </section>
+
+        <section>
+          <h3>Third-party</h3>
+          <dl class="lic-credits">
+            <dt>Input dictionary</dt>
+            <dd>rime-ice (雾凇拼音) — MPL-2.0, compiled into a static JSON table.</dd>
+            <dt>Cal Sans</dt>
+            <dd>Display typeface by Cal.com — SIL Open Font License 1.1.</dd>
+            <dt>Inter</dt>
+            <dd>UI typeface by Rasmus Andersson — SIL Open Font License 1.1.</dd>
+            <dt>Icons</dt>
+            <dd>Hand-written inline SVG, MIT, no icon-font dependency.</dd>
+          </dl>
+        </section>
+
+        <p class="lic-foot">
+          LumeOS is a personal toy system. "Lume" and the star mark are not
+          trademarks of anyone but me.
+        </p>
+      </div>`;
+  }
+};
+
 const APPS = {
   terminal: TerminalApp,
   files: FilesApp,
   editor: EditorApp,
   settings: SettingsApp,
-  about: AboutApp
+  about: AboutApp,
+  tips: TipsApp,
+  licence: LicenceApp
 };

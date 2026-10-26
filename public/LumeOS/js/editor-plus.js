@@ -208,6 +208,10 @@
     const area = opts.area;
     const wrap = opts.wrap;
     const isCode = opts.lang === 'lume';
+    const lang = opts.lang || 'text';
+    /* 括号 / 引号配对不分语言：Markdown 和纯文本一样需要（写 md 时引号成对尤其常见），
+       所以这条单独开一个开关，不跟着代码补全那个门槛走 */
+    const pairOn = opts.pairs !== false && /^(lume|md|text|none)$/.test(lang);
     const unit = detectUnit(area.value);
 
     let pop = null;
@@ -427,7 +431,7 @@
       if (e.key === 'Backspace' && !mod && start === end && start > 0) {
         const prev = value[start - 1];
         const next = value[start];
-        if (PAIRS[prev] === next && (OPENERS.indexOf(prev) >= 0)) {
+        if (pairOn && PAIRS[prev] === next && (OPENERS.indexOf(prev) >= 0)) {
           e.preventDefault();
           replaceRange(start - 1, start + 1, '', start - 1);
           return;
@@ -448,29 +452,52 @@
         return;
       }
 
+      const isBracketKey = (mod || e.altKey || e.key.length !== 1) ? false : true;
+
+      /* ---- 括号 / 引号：所有语言都生效，不要求 isCode ---- */
+      if (pairOn && isBracketKey) {
+        const bch = e.key;
+
+        /* 选中一段后打括号/引号：把选区包起来 */
+        if (start !== end && OPENERS.indexOf(bch) >= 0) {
+          const inner = value.slice(start, end);
+          if (inner.indexOf('\n') === -1) {
+            e.preventDefault();
+            replaceRange(start, end, bch + inner + PAIRS[bch], start + 1, end + 1);
+            return;
+          }
+        }
+
+        /* 后面已经是同一个闭合符：跳过去，别叠一层 */
+        if (start === end && (CLOSERS.indexOf(bch) >= 0 || bch === '"' || bch === "'")) {
+          if (value[start] === bch) {
+            e.preventDefault();
+            area.setSelectionRange(start + 1, start + 1);
+            hidePop();
+            return;
+          }
+        }
+
+        /* 自动配对：后面紧跟标识符时不插手，免得破坏已有文字。
+           Markdown / 纯文本里"后面紧跟非空白"的概率很高（比如正在词中间插引号），
+           所以只用最保守的判定：后面是空格、行尾、或闭合/分隔符才补右半边。 */
+        if (OPENERS.indexOf(bch) >= 0 && start === end) {
+          const next = value[start] || '';
+          const blocked = isCode
+            ? next && !/[\s)\]},;:]/.test(next)
+            : next && !/[\s)\]},;:。，、！？]/.test(next);
+          if (!blocked) {
+            e.preventDefault();
+            replaceRange(start, start, bch + PAIRS[bch], start + 1);
+            return;
+          }
+        }
+      }
+
+      /* ---- 以下都是代码专属 ---- */
       if (mod || e.altKey || e.key.length !== 1 || !isCode) return;
 
       const ch = e.key;
-
-      /* 选中一段后打括号/引号：把选区包起来 */
-      if (start !== end && OPENERS.indexOf(ch) >= 0) {
-        const inner = value.slice(start, end);
-        if (inner.indexOf('\n') === -1) {
-          e.preventDefault();
-          replaceRange(start, end, ch + inner + PAIRS[ch], start + 1, end + 1);
-          return;
-        }
-      }
-
-      /* 后面已经是同一个闭合符：跳过去，别叠一层 */
-      if (start === end && (CLOSERS.indexOf(ch) >= 0 || ch === '"' || ch === "'")) {
-        if (value[start] === ch) {
-          e.preventDefault();
-          area.setSelectionRange(start + 1, start + 1);
-          hidePop();
-          return;
-        }
-      }
 
       /* 打 } 顺手退一级 */
       if (ch === '}' && start === end) {
@@ -480,17 +507,6 @@
           const text = cd.indent + '}';
           const at = cd.from + text.length;
           replaceRange(cd.from, start, text, at);
-          return;
-        }
-      }
-
-      /* 自动配对：后面紧跟标识符时不插手，免得破坏已有文字 */
-      if (OPENERS.indexOf(ch) >= 0 && start === end) {
-        const next = value[start] || '';
-        const blocked = next && !/[\s)\]},;:]/.test(next);
-        if (!blocked) {
-          e.preventDefault();
-          replaceRange(start, start, ch + PAIRS[ch], start + 1);
           return;
         }
       }

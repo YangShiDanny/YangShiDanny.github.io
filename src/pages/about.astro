@@ -6,6 +6,7 @@ import type { Locale } from '../i18n';
 const locale = Astro.currentLocale as Locale;
 const t = translations[locale];
 
+/* 只用来算年龄，生日本身不展示 */
 const birth = new Date('2011-09-27');
 const now = new Date();
 let age = now.getFullYear() - birth.getFullYear();
@@ -28,9 +29,6 @@ if (!hadBirthdayThisYear) age--;
         <div class="meta-item">
           <span class="meta-label">{t.about.ageLabel}</span>
           <span class="meta-value">{age}</span>
-        </div>
-        <div class="meta-item">
-          <span class="meta-label">{t.about.birth}</span>
         </div>
         <div class="meta-item">
           <span class="meta-label">{t.about.location}</span>

@@ -543,6 +543,8 @@
   function buildDock() {
     Object.keys(APPS).forEach((id) => {
       const app = APPS[id];
+      /* transient 应用（Tips / Licence）只在菜单栏有入口，不进 Dock */
+      if (app.transient) return;
       const btn = document.createElement('button');
       btn.className = 'dock-item';
       btn.type = 'button';
@@ -982,7 +984,7 @@
   }
 
   function buildSearchIndex() {
-    const apps = Object.keys(APPS).map((id) => ({
+    const apps = Object.keys(APPS).filter((id) => !APPS[id].transient).map((id) => ({
       kind: 'app',
       id,
       name: APPS[id].name,
@@ -1158,7 +1160,7 @@
       os: 'LumeOS 1.0 "Nebula"',
       kernel: '1.0.0-nebula',
       uptime: uptimeText(),
-      apps: Object.keys(APPS).length,
+      apps: Object.keys(APPS).filter((id) => !APPS[id].transient).length,
       theme: root.dataset.theme === 'light' ? 'light' : 'dark',
       engine: engineName(),
       memory: (navigator.deviceMemory || 16) + ' GB',
@@ -1268,6 +1270,19 @@
   el.mbSearch.addEventListener('click', openSpot);
   el.mbTheme.addEventListener('click', () => setTheme(root.dataset.theme === 'light' ? 'dark' : 'light'));
   el.dockPower.addEventListener('click', powerOff);
+
+  /* 菜单栏左侧的 Tips / Licence 标签：开一个普通窗口，但不进 Dock */
+  const mbTips = $('#mb-tips');
+  const mbLicence = $('#mb-licence');
+  if (mbTips) mbTips.addEventListener('click', () => openApp('tips'));
+  if (mbLicence) mbLicence.addEventListener('click', () => openApp('licence'));
+
+  /* 点版本号：顺手弹出系统菜单里的信息（复用 About） */
+  const mbVer = $('#mb-ver');
+  if (mbVer) {
+    mbVer.addEventListener('click', () => openApp('about'));
+    mbVer.title = 'LumeOS 1.0 “Nebula” · click for About';
+  }
 
   document.addEventListener('click', (e) => {
     if (!e.target.closest('#sys-menu') && !e.target.closest('#mb-logo')) {

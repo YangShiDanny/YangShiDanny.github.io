@@ -1,6 +1,6 @@
 /* ============================================================
    LumeIME — LumeOS 内置输入法
-   全拼 · 词频排序 · 用户词自学习 · 独立 Shift 切换中/英
+   全拼 · 简拼 · 智能切分整句 · 词频排序 · 用户词自学习 · 独立 Shift 切换中/英
    词库：rime-ice（雾凇拼音）预编译为 assets/ime-dict.json，
    按拼音前缀二分查找，首次进入中文模式时懒加载。
    ============================================================ */
@@ -9,6 +9,7 @@
 
   var PAGE = 9;            // 候选栏一次显示 9 个（数字键直选）
   var MAX_SCAN = 6000;     // 前缀扫描上限，防止极端缓冲卡顿
+  var MAX_SYLLABLE = 6;    // 单个拼音音节的搜索上限
   var DICT_URL = 'assets/ime-dict.json';
   var LS_MODE = 'lume.ime.mode';
   var LS_ON = 'lume.ime.on';
@@ -21,6 +22,7 @@
     cands: [],         // 候选词数组
     page: 0,
     sel: 0,            // 页内选中下标
+    kind: 'empty',     // 候选来源：full / initial / mixed / phrase
     field: null,       // 正在输入的目标元素
     loading: false,
     ready: false
@@ -59,6 +61,10 @@
   }
 
   /* ---------- 词库 ---------- */
+  var SYLLABLES = null;   // Set：合法完整拼音音节（由单字条目反推）
+  var sylCache = Object.create(null);
+  var cacheKeys = 0;
+
   function loadDict() {
     if (dictRows || state.loading) return;
     state.loading = true;
@@ -66,9 +72,16 @@
       .then(function (r) { return r.json(); })
       .then(function (rows) {
         dictRows = rows;
+        buildSyllables();
         state.ready = true;
         state.loading = false;
         if (state.buf) refresh();
+
+        /* 简拼索引只建一次，但要扫 4 万条、约 140ms。
+           绝不能等用户打字时再建（那一下会卡住按键），
+           所以词库一到就丢到空闲帧去预建。 */
+        var idle = window.requestIdleCallback || function (fn) { return setTimeout(fn, 300); };
+        idle(function () { buildInitialIndex(); });
       })
       .catch(function () {
         state.loading = false;
@@ -76,34 +89,270 @@
       });
   }
 
-  function lookup(buf) {
-    if (!dictRows) return [];
-    /* 二分找第一个 >= buf 的位置，然后线性收集同前缀 */
+  /* 单字条目的 key 一定是完整音节（a / ai / zhuang…），拿来当切分字典 */
+  function buildSyllables() {
+    var s = Object.create(null);
+    for (var i = 0; i < dictRows.length; i++) {
+      if (dictRows[i][1].length === 1) s[dictRows[i][0]] = true;
+    }
+    SYLLABLES = s;
+  }
+
+  /* 二分找第一个 >= key 的行下标 */
+  function lowerBound(key) {
     var lo = 0, hi = dictRows.length;
     while (lo < hi) {
       var m = (lo + hi) >> 1;
-      if (dictRows[m][0] < buf) lo = m + 1;
+      if (dictRows[m][0] < key) lo = m + 1;
       else hi = m;
     }
+    return lo;
+  }
+
+  function cached(key) {
+    if (sylCache[key] !== undefined) return sylCache[key];
+    /* 缓存别无限长：连着打长句会撞出成百上千个前缀键 */
+    if (++cacheKeys > 4000) {
+      sylCache = Object.create(null);
+      cacheKeys = 0;
+    }
+    if (!dictRows) return [];
+    var lo = lowerBound(key);
     var seen = Object.create(null);
     var out = [];
     for (var i = lo; i < dictRows.length; i++) {
       var row = dictRows[i];
-      if (row[0].slice(0, buf.length) !== buf) break;
+      if (row[0].slice(0, key.length) !== key) break;
       var w = row[1];
       if (seen[w] !== undefined) {
         if (row[2] > seen[w].fr) seen[w].fr = row[2];
         continue;
       }
-      seen[w] = { w: w, fr: row[2], u: userFreq[w] || 0 };
+      seen[w] = { w: w, fr: row[2], u: userFreq[w] || 0, exact: row[0] === key ? 1 : 0 };
       out.push(seen[w]);
       if (out.length >= MAX_SCAN) break;
     }
     out.sort(function (a, b) {
-      /* 用户打过的词优先，其次按语料频度 */
-      return (b.u - a.u) || (b.fr - a.fr);
+      /* 用户打过的词优先；其次"完全匹配"优先于"只是前缀匹配"
+         （否则打 ni 会被 nian/年 这种更高频的前缀词压住）；
+         最后才按语料频度 */
+      return (b.u - a.u) || (b.exact - a.exact) || (b.fr - a.fr);
     });
-    return out.slice(0, 90);
+    var top = out.slice(0, 90);
+    sylCache[key] = top;
+    return top;
+  }
+
+  /* 全拼前缀查找（老行为，作为兜底） */
+  function lookup(buf) {
+    if (!dictRows) return [];
+    return cached(buf);
+  }
+
+  /* 简拼：把 "nihao" 缩成首字母串 "nh"，再拿词库 key 的首字母去撞。
+     只能撞"整词简拼"（nihao→nh），撞不了跨音节任意缩写。 */
+  function initialsOf(key) {
+    if (!SYLLABLES) return '';
+    var out = [];
+    var i = 0;
+    while (i < key.length) {
+      var hit = '';
+      for (var n = Math.min(MAX_SYLLABLE, key.length - i); n >= 1; n--) {
+        var seg = key.substr(i, n);
+        if (SYLLABLES[seg]) { hit = seg; break; }
+      }
+      if (!hit) return '';            // 切不干净，这个 key 不算音节串
+      out.push(hit.charAt(0));
+      i += hit.length;
+    }
+    return out.join('');
+  }
+
+  var initialCache = Object.create(null);   // 首字母串 → { word: bestRow }
+  var initialBuilt = false;
+
+  function buildInitialIndex() {
+    if (initialBuilt || !dictRows) return;
+    initialBuilt = true;
+    for (var i = 0; i < dictRows.length; i++) {
+      var row = dictRows[i];
+      if (row[1].length < 2) continue;        // 简拼只对词组有意义
+      var ini = initialsOf(row[0]);
+      if (!ini || ini.length < 2 || ini.length > 10) continue;
+      var bucket = initialCache[ini];
+      if (!bucket) bucket = initialCache[ini] = Object.create(null);
+      var prev = bucket[row[1]];
+      if (!prev || row[2] > prev.fr) bucket[row[1]] = { w: row[1], fr: row[2] };
+    }
+  }
+
+  /* 简拼候选：缓冲长度 >= 2 且全拼命中少时启用 */
+  function lookupInitials(buf) {
+    /* 索引还没建好就先跳过这次简拼，绝不在按键路径上同步扫全库。
+       空闲预建完成后，下一次按键自然就有简拼了。 */
+    if (!initialBuilt) {
+      var idle = window.requestIdleCallback || function (fn) { return setTimeout(fn, 0); };
+      idle(function () { buildInitialIndex(); });
+      return [];
+    }
+    var bucket = initialCache[buf];
+    if (!bucket) return [];
+    var out = [];
+    for (var w in bucket) {
+      out.push({ w: w, fr: bucket[w].fr, u: userFreq[w] || 0, ini: true });
+    }
+    out.sort(function (a, b) { return (b.u - a.u) || (b.fr - a.fr); });
+    return out.slice(0, 60);
+  }
+
+  /* 智能切分：把缓冲切成若干音节，一段一段取最短音的整词，
+     拼成一句候选（"woaini" → 我爱 + 你）。用词频乘积打分，取最优路径。 */
+  function segmentations(buf, limit) {
+    var res = [];
+    var budget = 4000;   /* 节点预算：比"命中数上限"靠谱，短缓冲不会被误截断 */
+    function walk(i, acc) {
+      if (budget-- <= 0) return;
+      if (i >= buf.length) { res.push(acc.slice()); return; }
+      for (var n = 1; n <= MAX_SYLLABLE && i + n <= buf.length; n++) {
+        var seg = buf.substr(i, n);
+        if (!SYLLABLES[seg]) continue;
+        acc.push(seg);
+        walk(i + n, acc);
+        acc.pop();
+        if (res.length >= limit) return;
+      }
+    }
+    if (SYLLABLES) walk(0, []);
+    return res;
+  }
+
+  /* 整句：先把缓冲切成音节序列，再在每一段上找"最长能覆盖多个音节的真词"。
+     jintiantianqi 切到 jin|tian|tian|qi 后，还能把 tian+qi 合成 天气（键 tianqi）。
+     注意：cached() 是按前缀给的，所以取词时一定要认 exact（键 === 词），
+     否则 wordAt('jin') 会拿到 今天(键 jintian)，整句会串味还带出生僻字。 */
+  function lookupPhrases(buf) {
+    if (!SYLLABLES || buf.length < 4) return [];
+
+    /* 性能闸门：音节数控制搜索宽度。
+       短缓冲（woaini）切分极少，长缓冲（zhonghuarenmin）组合爆炸，
+       所以拆得越长，采样越少，保证单次按键都在一帧预算内。 */
+    var limit = buf.length <= 6 ? 16 : buf.length <= 10 ? 12 : buf.length <= 16 ? 8 : 5;
+    var segs = segmentations(buf, limit);
+    var out = [];
+    var seen = Object.create(null);
+
+    for (var s = 0; s < segs.length; s++) {
+      var syls = segs[s];
+      if (syls.length < 2) continue;
+
+      /* 把音节序列重新聚成"词"：尽量用覆盖多个音节的真实词条 */
+      var words = [];
+      var ok = true;
+      var score = 0;
+
+      for (var p = 0; p < syls.length; ) {
+        var got = null;
+        var span = 0;
+        /* 从最长开始试：几个连续音节拼起来的拼音串，在词库里就是整词 */
+        for (var n = Math.min(4, syls.length - p); n >= 1; n--) {
+          var key = syls.slice(p, p + n).join('');
+          var rows = cached(key);
+          var hit = null;
+          for (var i = 0; i < rows.length; i++) {
+            if (rows[i].exact && rows[i].w.length >= (n === 1 ? 1 : 2)) { hit = rows[i]; break; }
+          }
+          if (hit) { got = hit; span = n; break; }
+        }
+        if (!got) { ok = false; break; }
+        words.push(got.w);
+        score += (got.w.length > 1 ? 1 : 0.4) * Math.log(1 + got.fr);
+        p += span;
+      }
+      if (!ok) continue;
+
+      var text = words.join('');
+      if (seen[text]) continue;
+      seen[text] = true;
+
+      var multi = words.filter(function (w) { return w.length > 1; }).length;
+      out.push({
+        w: text,
+        fr: Math.round(score * 100),
+        u: 0,
+        phrase: true,
+        parts: words.length,
+        multi: multi,
+        cover: multi / words.length
+      });
+    }
+
+    out.sort(function (a, b) {
+      return (b.cover - a.cover) || (a.parts - b.parts) || (b.fr - a.fr);
+    });
+
+    var ok2 = out.filter(function (c) { return c.multi > 0; });
+    return ok2.slice(0, 6);
+  }
+
+  /* 总候选：全拼前缀 → 简拼 → 整句，三段去重合并 */
+  function candidates(buf) {
+    if (!dictRows) return { list: [], kind: 'loading' };
+    if (!buf) return { list: [], kind: 'empty' };
+
+    var full = lookup(buf);
+    var list = full.slice(0, 40);
+    var kind = 'full';
+
+    /* 全拼结果稀薄时再补简拼，免得把真正的全拼结果挤下去 */
+    if (buf.length >= 2 && list.length < 6) {
+      var ini = lookupInitials(buf);
+      if (ini.length) {
+        kind = list.length ? 'mixed' : 'initial';
+        var have = Object.create(null);
+        list.forEach(function (c) { have[c.w] = true; });
+        ini.forEach(function (c) { if (!have[c.w]) list.push(c); });
+      }
+    }
+
+    /* 整句：缓冲能切成 2 段以上完整音节时插进去。
+       但如果缓冲本身就命中了一个完整词（比如 nihao → 你好），
+       整句只排到它后面，不要抢拼音直给的那个词。 */
+    var ph = lookupPhrases(buf);
+    if (ph.length) {
+      kind = 'phrase';
+
+      /* 去重：整句和前缀候选经常撞车（woaini 既是词也是句），
+         用一张表统一收，先来的位置保留。 */
+      var seenW = Object.create(null);
+      var merged = [];
+      var push = function (c) {
+        if (seenW[c.w]) return;
+        seenW[c.w] = true;
+        merged.push(c);
+      };
+
+      var selfWord = list.some(function (c) { return c.exact; });
+      if (selfWord) {
+        /* 完全匹配词 > 整句 > 其余前缀候选 */
+        list.filter(function (c) { return c.exact; }).forEach(push);
+        ph.forEach(push);
+        list.filter(function (c) { return !c.exact; }).forEach(push);
+      } else {
+        ph.forEach(push);
+        list.forEach(push);
+      }
+      list = merged;
+    } else {
+      /* 没有整句也要去重（简拼合并时可能重复） */
+      var seenW2 = Object.create(null);
+      list = list.filter(function (c) {
+        if (seenW2[c.w]) return false;
+        seenW2[c.w] = true;
+        return true;
+      });
+    }
+
+    return { list: list, kind: kind };
   }
 
   /* ---------- 可编辑区域判定 ---------- */
@@ -162,11 +411,24 @@
     bar.className = 'ime-bar';
     bar.setAttribute('aria-live', 'polite');
     bar.innerHTML =
-      '<div class="ime-line"><span class="ime-py"></span><span class="ime-status" hidden></span></div>' +
+      '<div class="ime-line">' +
+      '<span class="ime-py"></span>' +
+      '<span class="ime-kind" hidden></span>' +
+      '<span class="ime-page" hidden></span>' +
+      '<span class="ime-status" hidden></span>' +
+      '</div>' +
       '<div class="ime-cands"></div>';
     bar.addEventListener('mousedown', function (e) {
       /* 点候选词上屏，但不抢走输入框焦点 */
       e.preventDefault();
+      /* 点翻页箭头 */
+      var nav = e.target.closest('.ime-nav');
+      if (nav) {
+        var dir = nav.dataset.dir;
+        if (dir === 'next') nextPage();
+        else prevPage();
+        return;
+      }
       var c = e.target.closest('.ime-cand');
       if (c) {
         var idx = parseInt(c.dataset.i, 10);
@@ -177,38 +439,119 @@
     return bar;
   }
 
+  var KIND_LABEL = {
+    full: '全拼',
+    initial: '简拼',
+    mixed: '全拼·简拼',
+    phrase: '整句',
+    loading: '加载中',
+    empty: '无匹配'
+  };
+
   function showBar() {
     var b = ensureBar();
     b.hidden = false;
     b.querySelector('.ime-py').textContent = state.buf;
+
     var status = b.querySelector('.ime-status');
+    var kindEl = b.querySelector('.ime-kind');
+    var pageEl = b.querySelector('.ime-page');
     var candsBox = b.querySelector('.ime-cands');
 
     if (!state.ready) {
       status.hidden = false;
       status.textContent = state.loading ? 'loading dictionary…' : 'dictionary unavailable';
+      kindEl.hidden = true;
+      pageEl.hidden = true;
       candsBox.innerHTML = '';
       positionBar();
       return;
     }
     status.hidden = true;
 
+    var total = state.cands.length;
+
+    /* 候选来源标签：简拼 / 整句时提示一下，让人知道发生了什么 */
+    var kind = state.kind || 'empty';
+    if (KIND_LABEL[kind]) {
+      kindEl.hidden = false;
+      kindEl.textContent = KIND_LABEL[kind];
+      kindEl.className = 'ime-kind k-' + kind;
+    } else {
+      kindEl.hidden = true;
+    }
+
     var start = state.page * PAGE;
     var pageItems = state.cands.slice(start, start + PAGE);
+
     if (!pageItems.length) {
-      candsBox.innerHTML = '<span class="ime-none">no match · space to type raw</span>';
-    } else {
-      candsBox.innerHTML = '';
-      pageItems.forEach(function (c, i) {
-        var el = document.createElement('span');
-        el.className = 'ime-cand' + (i === state.sel ? ' sel' : '');
-        el.dataset.i = i;
-        el.innerHTML = '<b>' + ((i + 1) % 10) + '</b>';
-        el.appendChild(document.createTextNode(c.w));
-        candsBox.appendChild(el);
-      });
+      candsBox.innerHTML = '<span class="ime-none">no match · <b>space</b> to type raw · <b>esc</b> to clear</span>';
+      pageEl.hidden = true;
+      positionBar();
+      return;
     }
+
+    /* 组装候选 + 翻页箭头 */
+    var frag = document.createDocumentFragment();
+    if (state.page > 0) {
+      var prev = document.createElement('span');
+      prev.className = 'ime-nav';
+      prev.dataset.dir = 'prev';
+      prev.textContent = '‹';
+      prev.title = 'Previous page (PageUp / -)';
+      frag.appendChild(prev);
+    }
+    pageItems.forEach(function (c, i) {
+      var el = document.createElement('span');
+      el.className = 'ime-cand' + (i === state.sel ? ' sel' : '');
+      if (c.phrase) el.className += ' phrase';
+      if (c.ini) el.className += ' ini';
+      el.dataset.i = i;
+      el.title = c.phrase ? '整句候选 · 空格上屏' : c.ini ? '简拼候选' : '';
+      var num = document.createElement('b');
+      num.textContent = String((i + 1) % 10);
+      el.appendChild(num);
+      el.appendChild(document.createTextNode(c.w));
+      frag.appendChild(el);
+    });
+    if (start + PAGE < total) {
+      var next = document.createElement('span');
+      next.className = 'ime-nav';
+      next.dataset.dir = 'next';
+      next.textContent = '›';
+      next.title = 'More candidates (PageDown / =)';
+      frag.appendChild(next);
+    }
+
+    candsBox.innerHTML = '';
+    candsBox.appendChild(frag);
+
+    /* 页码：够一页以上才显示 */
+    var pages = Math.ceil(total / PAGE);
+    if (pages > 1) {
+      pageEl.hidden = false;
+      pageEl.textContent = (state.page + 1) + '/' + pages;
+    } else {
+      pageEl.hidden = true;
+    }
+
     positionBar();
+  }
+
+  function nextPage() {
+    if ((state.page + 1) * PAGE < state.cands.length) {
+      state.page++;
+      state.sel = 0;
+      showBar();
+    }
+  }
+
+  function prevPage() {
+    if (state.page > 0) {
+      state.page--;
+      state.sel = 0;
+      showBar();
+    }
   }
 
   function hideBar() {
@@ -269,7 +612,9 @@
   /* ---------- 选词 ---------- */
   function refresh() {
     if (!state.buf) { clearBuf(); return; }
-    state.cands = state.ready ? lookup(state.buf) : [];
+    var r = candidates(state.buf);
+    state.cands = r.list;
+    state.kind = r.kind;
     state.page = 0;
     state.sel = 0;
     showBar();
@@ -419,14 +764,14 @@
     }
 
     if (k === 'PageDown' || k === '=') {
-      if ((state.page + 1) * PAGE < state.cands.length) { state.page++; state.sel = 0; showBar(); }
+      nextPage();
       e.preventDefault();
       e.stopImmediatePropagation();
       return;
     }
 
     if (k === 'PageUp' || k === '-') {
-      if (state.page > 0) { state.page--; state.sel = 0; showBar(); }
+      prevPage();
       e.preventDefault();
       e.stopImmediatePropagation();
       return;
@@ -661,6 +1006,17 @@
     toggle: function () { toggleMode(); },
     setOn: setOn,
     feedKey: feedKey,
-    toggleKeyboard: toggleKeyboard
+    toggleKeyboard: toggleKeyboard,
+    /* 只给调试/单测用：读内部状态与候选，不对外承诺稳定 */
+    debug: function () {
+      return {
+        buf: state.buf,
+        kind: state.kind,
+        page: state.page,
+        sel: state.sel,
+        cands: state.cands.map(function (c) { return c.w; })
+      };
+    },
+    _onKey: onKey
   };
 })();

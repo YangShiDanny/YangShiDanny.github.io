@@ -56,6 +56,13 @@ export default {
         desc: "我自己做的静态站点/网页框架实验，面向创意站点开发。",
         tags: ["Astro", "TypeScript", "SSG"],
         link: "https://yangshidanny.github.io/lume/"
+      },
+      {
+        name: "MC 生存模式辅助工具包",
+        desc: "给 Minecraft 26.1.2 做的 Fabric 整合包，围绕生存与体验优化：Sodium + Iris + Lithium 提性能，Baritone 跑图、SeedCrackerX 破种子、Chunky 预生成地形。把 zip 丢进任意支持 Modrinth/CurseForge 整合包导入的启动器即可。",
+        tags: ["Minecraft", "Fabric", "整合包", "72 MB"],
+        link: "/downloads/survivalkits_modpack.zip",
+        download: true
       }
     ]
   },
@@ -64,7 +71,6 @@ export default {
     tagline: "构建数字现实。",
     intro: "我是上海的初中生，对电脑本身更感兴趣——网页、静态站点生成器，还有各种随手瞎折腾。做东西是因为好玩，不是为了什么头衔。",
     ageLabel: "年龄",
-    birth: "生日：2011-09-27",
     location: "所在地：上海",
     focusLabel: "我在做什么",
     focusText: "目前我在上海的一所初中上学，平时没什么时间上网，只能抽空做一些简单的开发小项目。课余时间我也喜欢玩 MC（Minecraft）这类游戏。不过算下来，我接触编程也已经有 6 年多的经验了。",

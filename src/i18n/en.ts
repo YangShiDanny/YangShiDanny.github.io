@@ -58,6 +58,13 @@ export default {
         desc: "My personal static site / web framework experiment built for creative sites.",
         tags: ["Astro", "TypeScript", "SSG"],
         link: "https://yangshidanny.github.io/lume/"
+      },
+      {
+        name: "Minecraft Survival Kit",
+        desc: "A Fabric modpack for Minecraft 26.1.2 built around survival and QoL: Sodium + Iris + Lithium for performance, Baritone for pathing, SeedCrackerX for seed cracking, Chunky for pre-generating terrain. Drop the zip into any launcher that imports Modrinth/CurseForge packs.",
+        tags: ["Minecraft", "Fabric", "Modpack", "72 MB"],
+        link: "/downloads/survivalkits_modpack.zip",
+        download: true
       }
     ]
   },
@@ -66,7 +73,6 @@ export default {
     tagline: "Engineering Digital Reality.",
     intro: "I'm a middle-school student in Shanghai who's into computers as a whole — web pages, static site generators, and all kinds of random front-end experiments. I build things for fun, not for a job title.",
     ageLabel: "Age",
-    birth: "Born: 2011-09-27",
     location: "Location: Shanghai",
     focusLabel: "Focus",
     focusText: "I'm currently a middle-school student in Shanghai, so I don't get much time online and can only tinker with simple development projects here and there. In my free time I also enjoy playing games like Minecraft. That said, I've been coding for over 6 years now.",
