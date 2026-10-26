@@ -211,18 +211,27 @@
       ring.style.left = ringX + 'px';
       ring.style.top = ringY + 'px';
 
-      /* 速度映射成拉伸：动得越快，白点沿运动方向越长、垂直方向越扁。
-         上限压住，再长就不像指针而像橡皮泥了。 */
+      /* 速度映射成拉伸，两个节点各自用：
+           dot  —— 只在 idle / text 态可见时拉长（链接态 dot 是透明的，
+                   写了也看不见，但省掉一次 setProperty）
+           ring —— 链接态那圈光晕拉长，让"可点"的反馈也跟着跟手 */
       const speed = Math.min(Math.hypot(vx, vy) / 26, 1);
       const stretch = 1 + speed * 0.32;
       const shrink = 1 - speed * 0.12;
       const angle = (Math.atan2(vy, vx) * 180) / Math.PI;
-      dot.style.setProperty('--stretch', stretch.toFixed(3));
-      dot.style.setProperty('--shrink', shrink.toFixed(3));
-      dot.style.setProperty('--angle', angle.toFixed(1) + 'deg');
-      ring.style.setProperty('--stretch', stretch.toFixed(3));
-      ring.style.setProperty('--shrink', shrink.toFixed(3));
-      ring.style.setProperty('--angle', angle.toFixed(1) + 'deg');
+      const st = stretch.toFixed(3);
+      const sh = shrink.toFixed(3);
+      const ang = angle.toFixed(1) + 'deg';
+
+      if (mode === 'link') {
+        ring.style.setProperty('--stretch', st);
+        ring.style.setProperty('--shrink', sh);
+        ring.style.setProperty('--angle', ang);
+      } else {
+        dot.style.setProperty('--stretch', st);
+        dot.style.setProperty('--shrink', sh);
+        dot.style.setProperty('--angle', ang);
+      }
 
       requestAnimationFrame(followRing);
     })();
@@ -230,7 +239,6 @@
     /* 文本态竖线的高度跟着光标底下的字号走。
        在 12px 正文上竖线和写法一样高，在 32px 标题上就该长一截；
        写死一个高度永远有一边不对。 */
-    const R_DOT = 10; // 与 CSS #cursor 的 20px/2 对应
     let barH = 24;
 
     function measureBar(node) {

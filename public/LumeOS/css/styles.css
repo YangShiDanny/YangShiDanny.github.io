@@ -332,11 +332,11 @@ textarea {
 }
 
 /* 内芯：一颗实心白点。
-   20px 是偏大的一档（macOS 指针约 16px），
-   在暗色背景上足够显眼，又不至于挡住字。 */
+   9px 是原来那档。20px 试过，在正文上会压掉半个字，
+   反而看不清底下写了什么 —— 指针是找位置的，不是抢戏的。 */
 #cursor {
-  width: 20px;
-  height: 20px;
+  width: 9px;
+  height: 9px;
   background: var(--cursor);
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.16),
@@ -375,22 +375,29 @@ textarea {
     0 0 10px rgba(255, 255, 255, 0.35);
 }
 
-/* 链接态：圆点不缩放、不消失，只是旁边多一圈描边。
-   以前把点缩到 scale(0.1)、靠环放大来示意"可点"，
-   结果鼠标在链接上时指针本体反而看不见了 —— 位置感全丢。 */
+/* 链接态：小白点完全隐掉，只留一圈向外发散的白色光晕。
+   用户明确要求过 —— 链接下不要有那个点，光只往外扩、不往内收。
+
+   实现上避开 inset：inset 阴影是朝里打的，看起来像"凹进去"，
+   和外发光的观感相反。这里用三层外阴影叠出由近到远的衰减，
+   外加一圈 1px 的白描边定住边界 —— 纯靠 glow 模糊的话，
+   边界会散掉，鼠标在哪就看不清了。 */
 #cursor.is-link {
-  /* 保留实体，只提亮一点 */
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.18),
-    0 1px 4px rgba(0, 0, 0, 0.3),
-    0 0 14px color-mix(in srgb, var(--accent) 55%, transparent);
+  opacity: 0;
+  /* 点没了，拉伸也跟着停 —— 否则一个不可见的椭圆还在被算 */
+  transform: translate(-50%, -50%);
 }
 #cursor-ring.is-link {
   opacity: 1;
+  /* 速度拉伸保留：动得越快，光环沿运动方向稍拉长 */
   transform: translate(-50%, -50%) rotate(var(--angle, 0deg))
-    scale(var(--stretch, 1), var(--shrink, 1)) scale(1.16);
-  border-color: color-mix(in srgb, var(--accent) 62%, white 12%);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 34%, transparent);
+    scale(var(--stretch, 1), var(--shrink, 1)) scale(1.12);
+  /* 白描边 + 三层向外扩散的光，衰减到 0 。全部是外阴影，没有 inset。 */
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 0 6px rgba(255, 255, 255, 0.55),
+    0 0 16px rgba(255, 255, 255, 0.32),
+    0 0 32px rgba(255, 255, 255, 0.16);
 }
 
 #cursor.is-hidden,
@@ -401,8 +408,8 @@ textarea {
 
 /* 拖拽中：圆点略收一点，给"抓住了"的反馈 */
 #cursor.is-dragging {
-  width: 17px;
-  height: 17px;
+  width: 8px;
+  height: 8px;
 }
 
 /* 亮色主题：白点在浅底上看不见，换成深色。
@@ -426,7 +433,7 @@ textarea {
     transform: translate(-50%, -50%);
   }
   #cursor-ring.is-link {
-    transform: translate(-50%, -50%) scale(1.16);
+    transform: translate(-50%, -50%) scale(1.12);
   }
 }
 
