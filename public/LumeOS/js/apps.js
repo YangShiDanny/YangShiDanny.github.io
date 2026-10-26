@@ -130,7 +130,7 @@ const TerminalApp = {
           ['cd <path>', 'change directory'],
           ['cat <file>', 'print a file'],
           ['pwd', 'print working directory'],
-          ['open <app>', 'launch an app (try: files, editor, about)'],
+          ['open <app|url>', 'launch an app, or open a URL in the built-in browser'],
           ['lume <run|build> <file>', 'compile a .lume file in the browser'],
           ['py <setup|run|status>', 'install the Python runtime locally'],
           ['neofetch', 'system information'],
@@ -289,6 +289,14 @@ const TerminalApp = {
         const name = (args[0] || '').toLowerCase();
         const app = Object.keys(APPS).find((k) => k === name || APPS[k].name.toLowerCase() === name);
         if (!app) {
+          /* "open example.com" —— 看着像地址就直接丢给浏览器，
+             省得用户先开浏览器再敲一遍 */
+          const raw = args.join(' ');
+          if (raw && /[./:]/.test(raw) && APPS.browser) {
+            window.LumeOS.openApp('browser', { url: raw, forceNew: true });
+            printDim(`opening ${raw}…`);
+            return;
+          }
           printDim(`open: unknown app '${name}'. try: ${Object.keys(APPS).join(', ')}`);
           return;
         }
@@ -1439,10 +1447,10 @@ const AboutApp = {
   id: 'about',
   name: 'About',
   icon: 'about',
-  width: 620,
-  height: 400,
+  width: 700,
+  height: 560,
 
-  mount(body) {
+  mount(body, win) {
     const info = window.LumeOS.systemInfo();
 
     const ascii = [
@@ -1453,6 +1461,49 @@ const AboutApp = {
       '███████╗╚██████╔╝██║ ╚═╝ ██║███████╗',
       '╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝'
     ].join('\n');
+
+    /* 用法指导按「先干什么」排，不按功能分类排。
+       新用户第一个问题永远是「我能做什么」，
+       而不是「窗口管理器有哪些快捷键」。 */
+    const GUIDE = [
+      {
+        k: 'Getting around',
+        rows: [
+          ['⌘K / Ctrl K', 'Spotlight — jump to any app or file'],
+          ['Dock', 'Click to launch; right-click for New Window'],
+          ['Titlebar', 'Drag to move; double-click to zoom'],
+          ['⌘⇧L', 'Lock the screen'],
+          ['Right-click', 'The desktop for wallpaper / theme / new file']
+        ]
+      },
+      {
+        k: 'Writing',
+        rows: [
+          ['Editor', 'Plain text with syntax highlighting and live Markdown preview'],
+          ['⌘S', 'Save to the pretend filesystem (it survives reloads)'],
+          ['⌘⇧V', 'Toggle Markdown preview'],
+          ['( [ { " \'', 'Auto-closes; Backspace removes the pair'],
+          ['Shift', 'Switch the built-in IME between 中 / EN']
+        ]
+      },
+      {
+        k: 'Terminal',
+        rows: [
+          ['help', 'Every command that exists'],
+          ['lume run x.lume', 'Run a tiny scripting language in-browser'],
+          ['py setup', 'Fetch a Python runtime into this browser (one time)'],
+          ['shutdown', 'Power off — then quit the tab or reboot']
+        ]
+      },
+      {
+        k: 'Touch devices',
+        rows: [
+          ['Long-press', 'Same as right-click — menus work without a mouse'],
+          ['⌨ tray key', 'On-screen keyboard when there is no hardware one'],
+          ['Honest note', 'This desktop is built for a pointer; phones work but feel cramped']
+        ]
+      }
+    ];
 
     body.innerHTML = `
       <div class="about">
@@ -1476,11 +1527,136 @@ Engine     ${esc(info.engine)}
 Memory     ${esc(info.memory)}</div>
         </div>
 
+        <nav class="about-jump">
+          <a href="#ab-guide">How to use</a>
+          <a href="#ab-lic">Licence</a>
+          <a href="#ab-cred">Credits</a>
+        </nav>
+
+        <section class="about-sec" id="ab-guide">
+          <h2>How to use</h2>
+          ${GUIDE.map(
+            (g) => `
+            <div class="about-guide-group">
+              <h3>${esc(g.k)}</h3>
+              <dl class="about-guide">
+                ${g.rows
+                  .map(([k, v]) => `<dt><kbd>${esc(k)}</kbd></dt><dd>${esc(v)}</dd>`)
+                  .join('')}
+              </dl>
+            </div>`
+          ).join('')}
+          <p class="about-tip">
+            完整键位表在菜单栏的 <b>TIPS</b>；Licence 原文在 <b>LICENCE</b>。
+          </p>
+        </section>
+
+        <section class="about-sec" id="ab-lic">
+          <h2>Licence</h2>
+          <p>
+            本站的文字、排版与图像 © ${new Date().getFullYear()} 羊史 (Yangshi)，保留所有权利。
+            欢迎阅读、带链接引用、或从代码里学习；请不要把正文与视觉设计原样搬走当成自己的作品。
+          </p>
+          <p>
+            <b>LumeOS 源码</b>（<code>/LumeOS</code> 下的 HTML / CSS / JavaScript）以
+            <b>MIT Licence</b> 发布 —— 可以随意使用、修改、分发，只要保留版权声明。
+          </p>
+          <details class="about-legal">
+            <summary>MIT Licence 全文</summary>
+            <pre>MIT License
+
+Copyright (c) ${new Date().getFullYear()} Yangshi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+          </details>
+          <p class="about-tip">
+            <a href="#ab-lic" role="button" data-act="openlicence">打开完整的 Licence 窗口 →</a>
+          </p>
+        </section>
+
+        <section class="about-sec" id="ab-cred">
+          <h2>Credits</h2>
+          <dl class="about-credits">
+            <dt>rime-ice（雾凇拼音）</dt>
+            <dd>输入法词库来源 · MPL-2.0</dd>
+            <dt>Pyodide</dt>
+            <dd>浏览器里的 Python 运行时 · MPL-2.0</dd>
+            <dt>Cal Sans</dt>
+            <dd>标题字体 · SIL Open Font License 1.1</dd>
+            <dt>Inter</dt>
+            <dd>正文字体 · SIL Open Font License 1.1</dd>
+            <dt>Astro</dt>
+            <dd>本站的构建工具 · MIT</dd>
+            <dt>gh-proxy.com · gh.dpik.top</dt>
+            <dd>下载镜像代理，用于大陆网络可访问性</dd>
+          </dl>
+        </section>
+
         <p class="about-foot">
           Build ${esc(info.build)} · made by 羊史 (Yangshi) · no frameworks, no build step, no telemetry.<br />
           A toy, but a careful one.
         </p>
       </div>`;
+
+    /* 锚点跳转：默认 a[href="#id"] 会改 location.hash，
+       在这个页面里等于把整个站点导航走 —— 必须拦下来改成滚动。 */
+    /* 锚点跳转：默认 a[href="#id"] 会改 location.hash，
+       在这个页面里等于把整个站点导航走 —— 必须拦下来改成滚动。
+       注意顺序：动作按钮要先判，因为 <a href="#" data-act="..."> 同时命中两个分支。 */
+    body.addEventListener('click', (e) => {
+      if (e.target.closest('[data-act="openlicence"]')) {
+        e.preventDefault();
+        window.LumeOS.openApp('licence');
+        return;
+      }
+      const a = e.target.closest('a[href^="#"]');
+      if (a) {
+        e.preventDefault();
+        const id = a.getAttribute('href').slice(1);
+        const target = id && body.querySelector('#' + id);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+
+    /* 窗口标题跟着滚动位置变，读完一段就知道自己在哪一节。
+       判定用「这一节的顶边已经滚过视口上沿一定距离」，
+       阈值要比 .about 的 padding-top 大一点 —— 否则停在顶部时
+       第一节判不出来，标题会一直空着。 */
+    const shell = body.querySelector('.about');
+    const marks = Array.from(body.querySelectorAll('.about-sec'));
+    const LABEL = { 'ab-guide': 'How to use', 'ab-lic': 'Licence', 'ab-cred': 'Credits' };
+    let lastId = null;
+
+    const sync = () => {
+      const y = shell.scrollTop + 140;
+      let cur = marks.length ? marks[0].id : '';
+      for (const m of marks) {
+        if (m.offsetTop <= y) cur = m.id;
+      }
+      if (cur === lastId) return;
+      lastId = cur;
+      const label = LABEL[cur] || '';
+      if (win && win.setTitle) win.setTitle(label ? 'About — ' + label : 'About');
+    };
+
+    shell.addEventListener('scroll', sync, { passive: true });
+    sync();
   }
 };
 
@@ -1644,6 +1820,513 @@ SOFTWARE.</pre>
   }
 };
 
+/* ---------------------------------------------------------- */
+/*  Browser                                                   */
+/* ---------------------------------------------------------- */
+/* 内置 iframe 浏览器。
+   最大的坑是：绝大多数站点都发 X-Frame-Options: DENY 或
+   Content-Security-Policy: frame-ancestors 'none'，iframe 会被直接拒掉。
+   前端没有任何办法绕过（这是浏览器强制执行的），也探测不到被拒的确切原因
+   —— onload 不触发、onerror 也不给信息，只能等超时。
+
+   所以这个浏览器的定位必须是「能开的就开，开不了就一键交给真实浏览器」，
+   而不是假装什么都能打开。判断不了的时候不报错，而是坦白说清楚，
+   并把「在浏览器中打开」放在最显眼的位置。 */
+const BROWSER = {
+  KEY: 'lume.browser',        /* localStorage：收藏夹 + 历史 + 上次地址 */
+  LOAD_TIMEOUT: 4200,         /* 超过这个时间还没 onload，基本可以判定被拒 */
+
+  /* 判断一个地址能不能塞进 iframe。
+     不追求全对，只求「明显会被拒的别浪费用户四秒」。
+     返回三态：'bad'（地址本身就废了）/ 'blocked'（明知会被拒）/ 'maybe'（值得一试）。 */
+  verdict(url) {
+    let host = '';
+    let proto = '';
+    try {
+      const u = new URL(url);
+      host = u.host.toLowerCase();
+      proto = u.protocol.toLowerCase();
+    } catch (e) {
+      return 'bad';
+    }
+    /* 没 host 或者不是 http(s)：chrome: / about: / file: 这类 iframe 一律打不开。
+       用户时常手打 "chrome://settings"，得当场给个明确说法，别空等超时。 */
+    if (!host || (proto !== 'http:' && proto !== 'https:')) return 'bad';
+
+    /* 明确声明禁止嵌入的站点，直接不给试 */
+    const BLOCKED = [
+      'google.com', 'www.google.com', 'youtube.com', 'www.youtube.com',
+      'github.com', 'twitter.com', 'x.com', 'facebook.com',
+      'instagram.com', 'linkedin.com', 'reddit.com', 'zhihu.com',
+      'weibo.com', 'bilibili.com', 'taobao.com', 'tmall.com',
+      'jd.com', 'wechat.com', 'qq.com', 'baidu.com', 'amazon.com'
+    ];
+    if (BLOCKED.some((d) => host === d || host.endsWith('.' + d))) return 'blocked';
+
+    return 'maybe';
+  },
+
+  hostOf(url) {
+    try {
+      return new URL(url).host.toLowerCase();
+    } catch (e) {
+      return '';
+    }
+  },
+
+  /* 用户可能只打 "example.com"，补协议。
+     也接受 "搜索词" —— 走 DuckDuckGo，因为它允许被 iframe 嵌入。 */
+  normalize(input) {
+    const s = (input || '').trim();
+    if (!s) return '';
+    if (/^https?:\/\//i.test(s)) return s;
+    /* 手打 scheme://... 的（chrome://、file://、ftp://）原样放行，
+       交给 verdict 判 bad —— 不能当成搜索词丢给 DuckDuckGo，
+       否则用户明明输了个地址，却被搜了一通。 */
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;
+    /* localhost 可能带路径，得像域名那样允许尾巴 */
+    if (/^localhost(:\d+)?([\/?#].*)?$/i.test(s)) return 'http://' + s;
+    if (/^[a-z0-9-]+(\.[a-z0-9-]+)+([\/?#].*)?$/i.test(s)) return 'https://' + s;
+    return 'https://duckduckgo.com/?q=' + encodeURIComponent(s);
+  },
+
+  read() {
+    try {
+      return JSON.parse(localStorage.getItem(this.KEY) || '{}') || {};
+    } catch (e) {
+      return {};
+    }
+  },
+
+  write(data) {
+    try {
+      localStorage.setItem(this.KEY, JSON.stringify(data));
+    } catch (e) {
+      /* 隐私模式下 localStorage 会抛错，收藏夹失效但不该让浏览器崩掉 */
+    }
+  },
+
+  bookmarks() {
+    const d = this.read();
+    return Array.isArray(d.marks) ? d.marks : [];
+  },
+
+  isMarked(url) {
+    return this.bookmarks().some((m) => m.url === url);
+  },
+
+  toggleMark(url, title) {
+    const d = this.read();
+    const marks = Array.isArray(d.marks) ? d.marks : [];
+    const i = marks.findIndex((m) => m.url === url);
+    if (i >= 0) marks.splice(i, 1);
+    else marks.unshift({ url, title: title || this.hostOf(url) || url, at: Date.now() });
+    d.marks = marks.slice(0, 60);
+    this.write(d);
+    return i < 0;
+  },
+
+  remember(url) {
+    if (!url) return;
+    const d = this.read();
+    const hist = Array.isArray(d.hist) ? d.hist.filter((h) => h !== url) : [];
+    hist.unshift(url);
+    d.hist = hist.slice(0, 40);
+    d.last = url;
+    this.write(d);
+  },
+
+  last() {
+    return this.read().last || '';
+  }
+};
+
+const BrowserApp = {
+  id: 'browser',
+  name: 'Browser',
+  icon: 'browser',
+  width: 900,
+  height: 620,
+
+  mount(body, win, opts) {
+    /* 冷启动优先恢复上次那一页（跟真浏览器一致）；
+       从没访问过就落在起始页，而不是硬塞一个 example.com。 */
+    const start = (opts && opts.url) || BROWSER.last() || '';
+
+    body.innerHTML = `
+      <div class="brw">
+        <div class="brw-bar">
+          <button class="brw-btn" type="button" data-act="back" aria-label="Back">${ICON.back}</button>
+          <button class="brw-btn" type="button" data-act="fwd" aria-label="Forward">${ICON.forward}</button>
+          <button class="brw-btn" type="button" data-act="reload" aria-label="Reload">${ICON.reload}</button>
+          <button class="brw-btn" type="button" data-act="home" aria-label="Home">${ICON.home2}</button>
+          <form class="brw-addr-wrap">
+            <span class="brw-scheme" data-scheme>https</span>
+            <input class="brw-addr" type="text" spellcheck="false" autocomplete="off"
+                   placeholder="address or search…" />
+          </form>
+          <button class="brw-btn brw-star" type="button" data-act="star" aria-label="Bookmark">${ICON.star}</button>
+          <button class="brw-btn brw-go-out" type="button" data-act="external" aria-label="Open in real browser">${ICON.external}</button>
+        </div>
+
+        <div class="brw-panel" hidden data-panel="marks">
+          <div class="brw-panel-head">
+            <span>Bookmarks</span>
+            <button class="brw-panel-x" type="button" data-act="closepanel" aria-label="Close">${ICON.close}</button>
+          </div>
+          <div class="brw-marks" data-marks></div>
+        </div>
+
+        <div class="brw-view">
+          <iframe class="brw-frame" data-frame
+                  referrerpolicy="no-referrer"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+          <div class="brw-block" data-block hidden>
+            <div class="brw-block-inner">
+              <div class="brw-block-ico">${ICON.external}</div>
+              <h3 data-block-title>This page refuses to be framed</h3>
+              <p data-block-text></p>
+              <div class="brw-block-actions">
+                <button class="brw-cta" type="button" data-act="external">Open in real browser</button>
+                <button class="brw-cta ghost" type="button" data-act="home">Go home</button>
+              </div>
+              <p class="brw-block-note">
+                Many sites send <code>X-Frame-Options</code> or
+                <code>frame-ancestors</code> to stop embedding. That is enforced by
+                the browser itself — no page can override it.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="brw-status">
+          <span class="brw-st-host" data-st-host>—</span>
+          <span class="brw-st-sep">·</span>
+          <span class="brw-st-msg" data-st-msg>ready</span>
+        </div>
+      </div>`;
+
+    const $ = (s) => body.querySelector(s);
+    const frame = $('[data-frame]');
+    const block = $('[data-block]');
+    const addr = $('.brw-addr');
+    const stHost = $('[data-st-host]');
+    const stMsg = $('[data-st-msg]');
+    const starBtn = $('[data-act="star"]');
+    const marksBox = $('[data-marks]');
+    const panel = $('[data-panel]');
+
+    /* 会话内的前进/后退。iframe 的 history 跨域读不到，
+       只能自己记一份栈 —— 够用，也不会有同步问题。 */
+    const stack = { list: [], i: -1 };
+    let current = '';
+    let timer = 0;
+
+    function say(msg) {
+      stMsg.textContent = msg;
+    }
+
+    function paintStar() {
+      const on = current ? BROWSER.isMarked(current) : false;
+      starBtn.innerHTML = on ? ICON.starfill : ICON.star;
+      starBtn.classList.toggle('on', on);
+      starBtn.title = on ? 'Remove bookmark' : 'Bookmark this page';
+    }
+
+    function paintMarks() {
+      const marks = BROWSER.bookmarks();
+      if (!marks.length) {
+        marksBox.innerHTML = '<p class="brw-empty">No bookmarks yet. Hit the star.</p>';
+        return;
+      }
+      marksBox.innerHTML = marks
+        .map(
+          (m, i) => `
+        <div class="brw-mark" data-i="${i}">
+          <span class="brw-mark-ico">${ICON.link}</span>
+          <span class="brw-mark-text">
+            <b>${esc(m.title)}</b>
+            <em>${esc(m.url)}</em>
+          </span>
+          <button class="brw-mark-del" type="button" data-del="${i}" aria-label="Remove">${ICON.close}</button>
+        </div>`
+        )
+        .join('');
+    }
+
+    function showPanel(on) {
+      panel.hidden = !on;
+      if (on) paintMarks();
+    }
+
+    /* 真正的加载。done 里再判一次超时 —— 如果 onload 没来，
+       说明被 X-Frame-Options / CSP 拒了。 */
+    function load(url, push) {
+      if (!url) return say('no address');
+
+      current = url;
+      BROWSER.remember(url);
+
+      if (push !== false) {
+        stack.list = stack.list.slice(0, stack.i + 1);
+        stack.list.push(url);
+        stack.i = stack.list.length - 1;
+      }
+
+      addr.value = url;
+      const host = BROWSER.hostOf(url);
+      stHost.textContent = host || '—';
+      $('[data-scheme]').textContent = (/^https:/i.test(url) ? 'https' : 'http');
+
+      const verdict = BROWSER.verdict(url);
+      block.hidden = true;
+      block.classList.remove('is-home');
+      say('loading…');
+      paintStar();
+      paintMarks();
+
+      clearTimeout(timer);
+
+      /* 地址本身就废了：立刻报错，不要空等超时 */
+      if (verdict === 'bad') {
+        frame.removeAttribute('src');
+        frame.hidden = true;
+        showBlock(url, 'bad');
+        return;
+      }
+
+      if (verdict === 'blocked') {
+        /* 明知会被拒，就别让用户盯着白屏等四秒 */
+        frame.removeAttribute('src');
+        frame.hidden = true;
+        showBlock(url, 'blocked');
+        return;
+      }
+
+      frame.hidden = false;
+      /* 换 src 让浏览器重新请求；onload 里的时间戳由计时器兜底 */
+      frame.src = url;
+      win.setTitle('Browser — ' + (host || 'new tab'));
+
+      timer = setTimeout(() => {
+        /* onload 会在上面清掉这个计时器；能走到这里说明没加载出来 */
+        frame.hidden = true;
+        showBlock(url, 'timeout');
+      }, BROWSER.LOAD_TIMEOUT);
+    }
+
+    /* kind: 'blocked' 预判被拒 / 'timeout' 超时 / 'bad' 地址非法 */
+    function showBlock(url, kind) {
+      clearTimeout(timer);
+      block.hidden = false;
+      block.classList.remove('is-home');
+
+      const TITLE = {
+        blocked: 'This site blocks embedding',
+        timeout: 'Nothing loaded — likely blocked',
+        bad: 'That address will not open'
+      };
+      const NOTE = {
+        blocked: '',
+        timeout:
+          ' 常见原因是站点发了 <code>X-Frame-Options</code> 或 CSP <code>frame-ancestors</code>，' +
+          '也可能是地址写错了、或者网络连不上。',
+        bad: ' 只能打开 <code>https://</code> 或 <code>http://</code> 开头的普通网页。'
+      };
+
+      $('[data-block-title]').textContent = TITLE[kind] || TITLE.timeout;
+      $('[data-block-text]').innerHTML = '<code>' + esc(url) + '</code> 没有在框里打开。' + (NOTE[kind] || '');
+      block.querySelector('.brw-block-ico').innerHTML = ICON.external;
+      /* 起始页会把 actions 换成快捷格，这里必须还原，否则从起始页
+         开一个失败地址后，CTA 按钮就再也回不来了 */
+      block.querySelector('.brw-block-actions').innerHTML =
+        '<button class="brw-cta" type="button" data-act="external">Open in real browser</button>' +
+        '<button class="brw-cta ghost" type="button" data-act="home">Go home</button>';
+      say(kind === 'bad' ? 'invalid address' : 'blocked — open it outside');
+    }
+
+    frame.addEventListener('load', () => {
+      clearTimeout(timer);
+      /* 真的加载出来了：收掉遮罩，把 iframe 放出来。
+         注意 load 在 about:blank 上也会触发，所以只在有 src 时算数。 */
+      if (!frame.getAttribute('src')) return;
+      block.hidden = true;
+      block.classList.remove('is-home');
+      frame.hidden = false;
+      say('loaded');
+      /* 跨域时 contentDocument 为 null，读不到标题，只能拿 host 凑 */
+      try {
+        const t = frame.contentDocument && frame.contentDocument.title;
+        if (t) win.setTitle('Browser — ' + t);
+      } catch (e) {
+        /* 跨域，忽略 */
+      }
+    });
+
+    /* ---------- 地址栏 ---------- */
+    const form = $('.brw-addr-wrap');
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const url = BROWSER.normalize(addr.value);
+      if (!url) return;
+      addr.blur();
+      load(url);
+    });
+    addr.addEventListener('focus', () => addr.select());
+
+    /* ---------- 按钮 ---------- */
+    body.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-act]');
+      if (btn) {
+        const act = btn.dataset.act;
+        if (act === 'back') {
+          if (stack.i > 0) {
+            stack.i -= 1;
+            load(stack.list[stack.i], false);
+            say('back');
+          } else say('no history');
+        } else if (act === 'fwd') {
+          if (stack.i < stack.list.length - 1) {
+            stack.i += 1;
+            load(stack.list[stack.i], false);
+            say('forward');
+          } else say('no history');
+        } else if (act === 'reload') {
+          if (current) {
+            const u = current;
+            /* 先清 src 再设回来，强制重新请求 */
+            frame.removeAttribute('src');
+            requestAnimationFrame(() => load(u, false));
+          }
+        } else if (act === 'home') {
+          goHome();
+        } else if (act === 'star') {
+          if (!current) return say('nothing to bookmark');
+          const on = BROWSER.toggleMark(current, BROWSER.hostOf(current));
+          paintStar();
+          paintMarks();
+          say(on ? 'bookmarked' : 'removed');
+        } else if (act === 'external') {
+          const url = current || BROWSER.normalize(addr.value);
+          if (!url) return say('no address');
+          window.open(url, '_blank', 'noopener,noreferrer');
+          say('opened in a real tab');
+        } else if (act === 'closepanel') {
+          showPanel(false);
+        }
+        return;
+      }
+
+      /* 点收藏项：直接加载 */
+      const mark = e.target.closest('.brw-mark');
+      if (mark && !e.target.closest('[data-del]')) {
+        const m = BROWSER.bookmarks()[Number(mark.dataset.i)];
+        if (m) {
+          showPanel(false);
+          load(m.url);
+        }
+        return;
+      }
+
+      /* 删收藏 */
+      const del = e.target.closest('[data-del]');
+      if (del) {
+        e.stopPropagation();
+        const list = BROWSER.bookmarks();
+        const m = list[Number(del.dataset.del)];
+        if (m) {
+          BROWSER.toggleMark(m.url, m.title);
+          paintMarks();
+          paintStar();
+        }
+      }
+    });
+
+    /* 点状态栏也能拉开收藏夹 —— 省一个工具栏按钮的位置 */
+    $('.brw-status').addEventListener('click', () => showPanel(panel.hidden));
+
+    /* ---------- 起始页 ---------- */
+    /* goHome 会清掉历史栈 —— 否则点过 Home 再点 Back，
+       会载回上一页，但 current / 地址栏还停在空态，界面就自相矛盾了。 */
+    function goHome() {
+      clearTimeout(timer);
+      showPanel(false);
+      frame.removeAttribute('src');
+      frame.hidden = true;
+      stack.list = [];
+      stack.i = -1;
+      current = '';
+      addr.value = '';
+      stHost.textContent = '—';
+      starBtn.innerHTML = ICON.star;
+      starBtn.classList.remove('on');
+      win.setTitle('Browser');
+      say('new tab');
+      homeScreen();
+    }
+
+    function homeScreen() {
+      const marks = BROWSER.bookmarks().slice(0, 6);
+      const tiles = marks.length
+        ? marks
+            .map(
+              (m, i) =>
+                `<button class="brw-tile" type="button" data-tile="${i}">
+                   <span class="brw-tile-ico">${ICON.browser}</span>
+                   <b>${esc(m.title)}</b>
+                 </button>`
+            )
+            .join('')
+        : ['example.com', 'developer.mozilla.org', 'duckduckgo.com']
+            .map(
+              (h) =>
+                `<button class="brw-tile" type="button" data-suggest="${h}">
+                   <span class="brw-tile-ico">${ICON.browser}</span>
+                   <b>${esc(h)}</b>
+                 </button>`
+            )
+            .join('');
+
+      /* 起始页复用 block 那层容器，样式一致，省一套 CSS */
+      block.hidden = false;
+      block.classList.add('is-home');
+      block.querySelector('.brw-block-ico').innerHTML = ICON.browser;
+      $('[data-block-title]').textContent = 'Where to?';
+      $('[data-block-text]').innerHTML =
+        'Type an address above, or pick something below. ' +
+        'Sites that block embedding will offer a one-click handoff to your real browser.';
+      block.querySelector('.brw-block-actions').innerHTML = '<div class="brw-tiles">' + tiles + '</div>';
+    }
+
+    /* 起始页里的快捷格是动态生成的，外层 [data-act] 委托管不到，
+       这里单独接一层。注意 block 是 body 的子孙，事件会冒泡到上面的
+       [data-act] 处理器 —— 所以只认带 data-suggest / data-tile 的点击，
+       带 data-act 的（Go home / Open in real browser）直接放行给上层。 */
+    block.addEventListener('click', (e) => {
+      if (e.target.closest('[data-act]')) return;
+      if (!block.classList.contains('is-home')) return;
+      const s = e.target.closest('[data-suggest]');
+      if (s) return load(BROWSER.normalize(s.dataset.suggest));
+      const t = e.target.closest('[data-tile]');
+      if (t) {
+        const m = BROWSER.bookmarks()[Number(t.dataset.tile)];
+        if (m) load(m.url);
+      }
+    });
+
+    /* 外部（Spotlight / 菜单 / 链接）可以带着网址进来。
+       窗口已经开着时会复用，由 openApp 调这个 navigate 换地址。 */
+    win.navigate = (url) => {
+      const u = BROWSER.normalize(url);
+      if (u) load(u, true);
+    };
+
+    /* 直接进地址就直接开，不进起始页 */
+    if (start) load(start, true);
+    else goHome();
+  }
+};
+
 const APPS = {
   terminal: TerminalApp,
   files: FilesApp,
@@ -1651,5 +2334,6 @@ const APPS = {
   settings: SettingsApp,
   about: AboutApp,
   tips: TipsApp,
-  licence: LicenceApp
+  licence: LicenceApp,
+  browser: BrowserApp
 };

@@ -568,6 +568,9 @@
         win.el.style.display = '';
       }
       focusWin(key);
+      /* 复用已有窗口时也要把新的目标喂进去，否则「在新标签打开」
+         会静默失败 —— 窗口亮起来了，但还停在上一页 */
+      if (opts.url && win.navigate) win.navigate(opts.url);
       return key;
     }
 
@@ -586,6 +589,7 @@
           w.el.style.display = '';
         }
         focusWin(foundKey);
+        if (opts.url && w.navigate) w.navigate(opts.url);
         return foundKey;
       }
     }
@@ -848,6 +852,7 @@
         '|',
         { ico: 'terminal', label: 'Terminal', dot: running.has('terminal'), run: launch('terminal') },
         { ico: 'files', label: 'Files', dot: running.has('files'), run: launch('files') },
+        { ico: 'browser', label: 'Browser', dot: running.has('browser'), run: launch('browser') },
         { ico: 'settings', label: 'Settings', dot: running.has('settings'), run: launch('settings') },
         '|',
         { ico: 'wall', label: 'Cycle wallpaper', hint: `→ ${nextWall}`, next: true, run: () => setWall(nextWall) },
