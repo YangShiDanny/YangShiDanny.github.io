@@ -133,10 +133,6 @@
 .term-out *,
 .about,
 .about *,
-.tips-doc,
-.tips-doc *,
-.lic-doc,
-.lic-doc *,
 .editor-md,
 .editor-md *,
 .brw-block-text,
@@ -513,6 +509,16 @@ textarea {
   opacity: 0;
   visibility: hidden;
 }
+/* .boot-log / .boot-version 是 position: fixed，会脱离父层单独渲染。
+   只给 .boot 设 visibility: hidden 时它们不一定跟着走（尤其淡出那 0.7s 里，
+   日志和版本号就成了一层半透明残影糊在桌面上）。
+   这两个是纯粹的"演完就退场"元素，不需要淡出，直接切掉最干净。 */
+.boot.done .boot-log,
+.boot.done .boot-version {
+  visibility: hidden;
+  opacity: 0;
+  transition: none;
+}
 .boot-inner {
   display: flex;
   flex-direction: column;
@@ -704,48 +710,6 @@ textarea {
   background: var(--hover);
 }
 
-/* 版本号和标签之间的竖细线 */
-.mb-sep {
-  width: 1px;
-  height: 13px;
-  background: var(--glass-line);
-  margin: 0 2px 0 3px;
-  opacity: 0.85;
-}
-
-/* ---- Tips / Licence 胶囊标签 ---- */
-.mb-tag {
-  height: 21px;
-  padding: 0 9px;
-  display: inline-flex;
-  align-items: center;
-  border-radius: 99px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--muted);
-  border: 1px solid var(--glass-line);
-  background: transparent;
-  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-  cursor: pointer;
-}
-.mb-tag:hover {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-.mb-tag:active {
-  transform: translateY(0.5px);
-}
-/* 窄屏把标签收起来，别把菜单栏挤爆 */
-@media (max-width: 640px) {
-  .mb-tag,
-  .mb-sep {
-    display: none;
-  }
-}
 .mb-btn {
   display: inline-flex;
   align-items: center;
@@ -3105,133 +3069,6 @@ textarea {
 .editor-md img { max-width: 100%; border-radius: 8px; }
 .editor-btn.on { border-color: var(--accent); color: var(--accent); }
 
-/* ============================================================
-   Tips / Licence 文档窗
-   ============================================================ */
-.tips-doc,
-.lic-doc {
-  height: 100%;
-  overflow: auto;
-  padding: 20px 22px 26px;
-  font-size: 13px;
-  line-height: 1.62;
-  color: var(--on-panel);
-}
-.tips-doc::-webkit-scrollbar,
-.lic-doc::-webkit-scrollbar { width: 8px; }
-
-.tips-head h2,
-.lic-head h2 {
-  margin: 0 0 4px;
-  font-family: var(--font-display);
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--text);
-}
-.tips-head p,
-.lic-head p {
-  margin: 0 0 18px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-/* ---- Tips：分组 + 键位表 ---- */
-.tips-group { margin-bottom: 20px; }
-.tips-group h3 {
-  margin: 0 0 8px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--faint);
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--glass-line);
-}
-.tips-group dl {
-  margin: 0;
-  display: grid;
-  grid-template-columns: minmax(96px, auto) 1fr;
-  gap: 7px 14px;
-  align-items: baseline;
-}
-.tips-group dt {
-  text-align: right;
-  margin: 0;
-}
-.tips-group dd {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12.5px;
-}
-.tips-group kbd {
-  display: inline-block;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  line-height: 1.5;
-  padding: 1px 6px;
-  border-radius: 5px;
-  color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--glass-line);
-  box-shadow: 0 1px 0 var(--glass-line);
-  white-space: nowrap;
-}
-
-/* ---- Licence ---- */
-.lic-doc section { margin-bottom: 20px; }
-.lic-doc section h3 {
-  margin: 0 0 7px;
-  font-family: var(--font-display);
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text);
-}
-.lic-doc p { margin: 0 0 8px; color: var(--muted); }
-.lic-doc b { color: var(--on-panel); font-weight: 600; }
-.lic-doc code {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--panel-2);
-  border: 1px solid var(--glass-line);
-  color: var(--text);
-}
-.lic-legal {
-  margin: 10px 0 0;
-  padding: 12px 14px;
-  max-height: 200px;
-  overflow: auto;
-  border-radius: 9px;
-  background: var(--panel-2);
-  border: 1px solid var(--glass-line);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  line-height: 1.62;
-  color: var(--muted);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.lic-credits {
-  margin: 0;
-  display: grid;
-  grid-template-columns: minmax(110px, auto) 1fr;
-  gap: 6px 16px;
-  font-size: 12.5px;
-}
-.lic-credits dt { color: var(--on-panel); font-weight: 500; }
-.lic-credits dd { margin: 0; color: var(--muted); }
-.lic-foot {
-  margin: 22px 0 0;
-  padding-top: 14px;
-  border-top: 1px solid var(--glass-line);
-  font-size: 11.5px;
-  color: var(--faint);
-  font-family: var(--font-mono);
-  line-height: 1.6;
-}
 
 /* ============================================================
    Browser — 内置 iframe 浏览器

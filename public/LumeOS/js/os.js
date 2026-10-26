@@ -702,7 +702,8 @@
   function buildDock() {
     Object.keys(APPS).forEach((id) => {
       const app = APPS[id];
-      /* transient 应用（Tips / Licence）只在菜单栏有入口，不进 Dock */
+      /* transient 应用不进 Dock（只在别处给入口，比如 About 里开子窗口）。
+         目前没有 App 用到，留着这个开关给以后的临时窗口。 */
       if (app.transient) return;
       const btn = document.createElement('button');
       btn.className = 'dock-item';
@@ -1353,6 +1354,12 @@
       el.boot.classList.add('done');
       el.desktop.classList.add('awake');
       el.desktop.removeAttribute('aria-hidden');
+      /* 光加 .done 只是 opacity:0 + visibility:hidden，元素还留在 DOM 里。
+         而 .boot-log / .boot-version 是 position: fixed —— 它们会脱离
+         父层的层叠上下文，在某些渲染路径下漏出来，开机日志和右下角版本号
+         就变成一层半透明的残影糊在桌面上。
+         等淡出过渡（0.7s）走完直接删掉，彻底断根。 */
+      setTimeout(() => el.boot.remove(), 800);
       if (typeof done === 'function') done();
     }, 2350);
   }
@@ -1503,11 +1510,9 @@
   el.mbTheme.addEventListener('click', () => setTheme(root.dataset.theme === 'light' ? 'dark' : 'light'));
   el.dockPower.addEventListener('click', powerOff);
 
-  /* 菜单栏左侧的 Tips / Licence 标签：开一个普通窗口，但不进 Dock */
-  const mbTips = $('#mb-tips');
-  const mbLicence = $('#mb-licence');
-  if (mbTips) mbTips.addEventListener('click', () => openApp('tips'));
-  if (mbLicence) mbLicence.addEventListener('click', () => openApp('licence'));
+  /* Tips / Licence 原先在菜单栏左侧有独立标签，现已并入 About，
+     菜单栏不再挂入口。两个 App 本身保留：About 里的
+     「打开完整的 Licence 窗口 →」还会调 openApp('licence')。 */
 
   /* 点版本号：顺手弹出系统菜单里的信息（复用 About） */
   const mbVer = $('#mb-ver');

@@ -1559,7 +1559,7 @@ Memory     ${esc(info.memory)}</div>
             </div>`
           ).join('')}
           <p class="about-tip">
-            完整键位表在菜单栏的 <b>TIPS</b>；Licence 原文在 <b>LICENCE</b>。
+            全部键位都在上面这张表里；Licence 原文见下方 <a href="#ab-lic">Licence</a> 一节。
           </p>
         </section>
 
@@ -1597,9 +1597,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.</pre>
           </details>
-          <p class="about-tip">
-            <a href="#ab-lic" role="button" data-act="openlicence">打开完整的 Licence 窗口 →</a>
-          </p>
         </section>
 
         <section class="about-sec" id="ab-cred">
@@ -1628,15 +1625,7 @@ SOFTWARE.</pre>
 
     /* 锚点跳转：默认 a[href="#id"] 会改 location.hash，
        在这个页面里等于把整个站点导航走 —— 必须拦下来改成滚动。 */
-    /* 锚点跳转：默认 a[href="#id"] 会改 location.hash，
-       在这个页面里等于把整个站点导航走 —— 必须拦下来改成滚动。
-       注意顺序：动作按钮要先判，因为 <a href="#" data-act="..."> 同时命中两个分支。 */
     body.addEventListener('click', (e) => {
-      if (e.target.closest('[data-act="openlicence"]')) {
-        e.preventDefault();
-        window.LumeOS.openApp('licence');
-        return;
-      }
       const a = e.target.closest('a[href^="#"]');
       if (a) {
         e.preventDefault();
@@ -1672,165 +1661,6 @@ SOFTWARE.</pre>
   }
 };
 
-/* ---------------------------------------------------------- */
-/*  Tips                                                      */
-/* ---------------------------------------------------------- */
-const TIPS = [
-  {
-    k: 'Window',
-    rows: [
-      ['⌘K', 'Spotlight — jump to any app or file'],
-      ['Drag', 'Move a window by its titlebar'],
-      ['Double-click', 'The titlebar to maximize / restore'],
-      ['Right-click', 'A Dock icon for New Window / Show All'],
-      ['Drag on desktop', 'Rubber-band select multiple icons']
-    ]
-  },
-  {
-    k: 'Editor',
-    rows: [
-      ['⌘S', 'Save the current file'],
-      ['⌘⇧V', 'Toggle Markdown preview'],
-      ['⌘/', 'Toggle line comment (Lume)'],
-      ['Tab / ⇧Tab', 'Indent or outdent the selection'],
-      ['( [ { " \'', 'Closes itself; Backspace deletes the pair']
-    ]
-  },
-  {
-    k: 'Input',
-    rows: [
-      ['Shift', 'Switch Chinese / English'],
-      ['Space', 'Commit the highlighted candidate'],
-      ['1–9', 'Pick a candidate directly'],
-      ['= / -', 'Next / previous candidate page'],
-      ['⌨ tray icon', 'On-screen keyboard for touch or no-IME setups']
-    ]
-  },
-  {
-    k: 'Shell',
-    rows: [
-      ['help', 'List every command'],
-      ['ls · cd · cat', 'Browse the pretend filesystem'],
-      ['neofetch', 'System summary'],
-      ['clear', 'Wipe the terminal']
-    ]
-  }
-];
-
-const TipsApp = {
-  id: 'tips',
-  name: 'Tips',
-  icon: 'info',
-  width: 560,
-  height: 520,
-  transient: true,   /* 不在 Dock 固定，只在菜单栏入口开窗 */
-
-  mount(body) {
-    body.innerHTML = `
-      <div class="tips-doc">
-        <div class="tips-head">
-          <h2>Quick tips</h2>
-          <p>The short version of everything that is not obvious.</p>
-        </div>
-        ${TIPS.map(
-          (g) => `
-          <section class="tips-group">
-            <h3>${esc(g.k)}</h3>
-            <dl>
-              ${g.rows
-                .map(
-                  ([key, text]) =>
-                    `<dt><kbd>${esc(key)}</kbd></dt><dd>${esc(text)}</dd>`
-                )
-                .join('')}
-            </dl>
-          </section>`
-        ).join('')}
-      </div>`;
-  }
-};
-
-/* ---------------------------------------------------------- */
-/*  Licence                                                   */
-/* ---------------------------------------------------------- */
-const LicenceApp = {
-  id: 'licence',
-  name: 'Licence',
-  icon: 'about',
-  width: 620,
-  height: 540,
-  transient: true,
-
-  mount(body) {
-    body.innerHTML = `
-      <div class="lic-doc">
-        <div class="lic-head">
-          <h2>Licence &amp; credits</h2>
-          <p>This site and LumeOS are personal work, shared so others can read the source.</p>
-        </div>
-
-        <section>
-          <h3>Website content</h3>
-          <p>
-            The text, layout and images of this site are
-            <b>© ${new Date().getFullYear()} Yangshi</b>, all rights reserved.
-            You are welcome to read, quote with a link back, or learn from the code.
-            Please do not republish the writing or the visual design as your own.
-          </p>
-        </section>
-
-        <section>
-          <h3>LumeOS source</h3>
-          <p>
-            The LumeOS code (HTML / CSS / JavaScript under
-            <code>/LumeOS</code>) is released under the
-            <b>MIT Licence</b>. Use it, fork it, ship it — just keep the
-            copyright notice:
-          </p>
-          <pre class="lic-legal">MIT License
-
-Copyright (c) ${new Date().getFullYear()} Yangshi
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.</pre>
-        </section>
-
-        <section>
-          <h3>Third-party</h3>
-          <dl class="lic-credits">
-            <dt>Input dictionary</dt>
-            <dd>rime-ice (雾凇拼音) — MPL-2.0, compiled into a static JSON table.</dd>
-            <dt>Cal Sans</dt>
-            <dd>Display typeface by Cal.com — SIL Open Font License 1.1.</dd>
-            <dt>Inter</dt>
-            <dd>UI typeface by Rasmus Andersson — SIL Open Font License 1.1.</dd>
-            <dt>Icons</dt>
-            <dd>Hand-written inline SVG, MIT, no icon-font dependency.</dd>
-          </dl>
-        </section>
-
-        <p class="lic-foot">
-          LumeOS is a personal toy system. "Lume" and the star mark are not
-          trademarks of anyone but me.
-        </p>
-      </div>`;
-  }
-};
 
 /* ---------------------------------------------------------- */
 /*  Browser                                                   */
@@ -2345,7 +2175,5 @@ const APPS = {
   editor: EditorApp,
   settings: SettingsApp,
   about: AboutApp,
-  tips: TipsApp,
-  licence: LicenceApp,
   browser: BrowserApp
 };
