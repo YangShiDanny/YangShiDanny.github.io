@@ -852,20 +852,53 @@
 
   function openDockMenu(x, y, item) {
     const id = item.dataset.app;
-    const running = !!Array.from(wins.values()).find((w) => w.app.id === id);
-    const items = [{ ico: APPS[id].icon, label: 'Open', run: () => openApp(id) }];
+    const appWins = Array.from(wins.entries()).filter(([, w]) => w.app.id === id);
+    const running = appWins.length > 0;
+    const items = [
+      { ico: APPS[id].icon, label: 'Open', run: () => openApp(id) },
+      { ico: 'plus', label: 'New Window', run: () => openApp(id, { forceNew: true }) }
+    ];
     if (running) {
       items.push('|', {
-        ico: 'close',
-        label: 'Close Window',
-        danger: true,
+        ico: 'desktop',
+        label: 'Show All Windows',
         run: () => {
-          const found = Array.from(wins.entries()).find(([, w]) => w.app.id === id);
-          if (found) closeWin(found[0]);
+          let last = null;
+          appWins.forEach(([k, w]) => {
+            if (w.minimized) {
+              w.minimized = false;
+              w.el.style.display = '';
+            }
+            last = k;
+          });
+          if (last) focusWin(last);
         }
       });
+      /* 多于一个窗口时，把每个窗口列出来，点哪个还原哪个 */
+      if (appWins.length > 1) {
+        appWins.forEach(([k, w]) => {
+          items.push({
+            ico: w.app.icon,
+            label: (w.el.querySelector('.win-title') || {}).textContent || w.app.name,
+            hint: w.minimized ? 'min' : '',
+            run: () => {
+              if (w.minimized) {
+                w.minimized = false;
+                w.el.style.display = '';
+              }
+              focusWin(k);
+            }
+          });
+        });
+      }
+      items.push('|', {
+        ico: 'close',
+        label: appWins.length > 1 ? 'Close All Windows' : 'Close Window',
+        danger: true,
+        run: () => appWins.forEach(([k]) => closeWin(k))
+      });
     }
-    popMenu(x, y, { title: APPS[id].name, sub: running ? 'Running' : 'Application', items: items });
+    popMenu(x, y, { title: APPS[id].name, sub: running ? appWins.length + ' running' : 'Application', items: items });
   }
 
   /* 把剪贴板内容塞进输入框；浏览器不给读就提示用 ⌘V */
@@ -1142,6 +1175,7 @@
   });
 
   el.deskIcons.addEventListener('click', (e) => {
+    clearPicked();
     const btn = e.target.closest('.desk-icon');
     if (!btn) return;
     if (btn.dataset.app) return openApp(btn.dataset.app);
@@ -1154,6 +1188,59 @@
     if (!btn) return;
     e.preventDefault();
     btn.click();
+  });
+
+  /* ---------- 桌面框选：空白处拖拽出圆角选框，套住图标即选中 ---------- */
+  function clearPicked() {
+    $$('.desk-icon.picked', el.deskIcons).forEach((n) => n.classList.remove('picked'));
+  }
+
+  function startMarquee(e) {
+    clearPicked();
+    const area = el.desktop.getBoundingClientRect();
+    const sx = e.clientX - area.left;
+    const sy = e.clientY - area.top;
+
+    const box = document.createElement('div');
+    box.className = 'marquee';
+    el.desktop.appendChild(box);
+
+    const move = (ev) => {
+      const cx = Math.max(0, Math.min(ev.clientX - area.left, area.width));
+      const cy = Math.max(0, Math.min(ev.clientY - area.top, area.height));
+      const x = Math.min(sx, cx);
+      const y = Math.min(sy, cy);
+      const w = Math.abs(cx - sx);
+      const h = Math.abs(cy - sy);
+      box.style.left = x + 'px';
+      box.style.top = y + 'px';
+      box.style.width = w + 'px';
+      box.style.height = h + 'px';
+
+      const b1 = { l: x, t: y, r: x + w, b: y + h };
+      $$('.desk-icon', el.deskIcons).forEach((n) => {
+        const r = n.getBoundingClientRect();
+        const l2 = r.left - area.left;
+        const t2 = r.top - area.top;
+        const hit = !(b1.r < l2 || b1.l > l2 + r.width || b1.b < t2 || b1.t > t2 + r.height);
+        n.classList.toggle('picked', hit);
+      });
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      box.remove();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
+  el.desktop.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    /* 只认桌面空白处：窗口 / Dock / 菜单栏 / 图标 / 输入控件都不算 */
+    if (e.target.closest('.window, .dock, .menubar, .menu, .desk-icon, #spotlight, #veil, button, input, textarea, select')) return;
+    closeMenus();
+    startMarquee(e);
   });
 
   /* 文件系统变化 → 桌面图标跟着变（新建/改名/删除都算） */

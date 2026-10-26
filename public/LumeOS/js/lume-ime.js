@@ -29,6 +29,9 @@
   var dictRows = null;   // [pinyinKey, word, freq]，按 key 字典序
   var bar = null;        // 候选栏 DOM
   var chip = null;       // 菜单栏 中/EN 指示
+  var kbBtn = null;      // 菜单栏键盘开关
+  var vkbEl = null;      // 虚拟键盘
+  var kbShift = false;   // 虚拟键盘的 Shift 状态
   var shiftSolo = false; // 独立按下 Shift（中间没碰别的键）
 
   /* ---------- 用户词频 ---------- */
@@ -440,7 +443,7 @@
     }
   }
 
-  /* ---------- 菜单栏指示 ---------- */
+  /* ---------- 菜单栏指示（托盘） ---------- */
   function buildChip() {
     var right = document.querySelector('.menubar-right');
     if (!right) return;
@@ -451,8 +454,166 @@
       if (!state.on) setOn(true);
       else toggleMode();
     });
+    /* 右键托盘图标：自己的小菜单（切中英 / 开关） */
+    chip.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!window.LumeOS || !window.LumeOS.popMenu) return;
+      window.LumeOS.popMenu(e.clientX, e.clientY, {
+        title: 'LumeIME',
+        sub: state.mode === 'cn' ? 'Chinese · pinyin' : 'English',
+        items: [
+          { ico: 'restart', label: state.mode === 'cn' ? 'Switch to English' : 'Switch to Chinese', run: function () { toggleMode(); } },
+          '|',
+          {
+            ico: 'power',
+            label: state.on ? 'Turn Off' : 'Turn On',
+            danger: state.on,
+            run: function () { setOn(!state.on); }
+          }
+        ]
+      });
+    });
+
+    /* 键盘开关（弹出移动键盘） */
+    kbBtn = document.createElement('button');
+    kbBtn.className = 'mb-btn mb-kb';
+    kbBtn.type = 'button';
+    kbBtn.setAttribute('aria-label', 'Toggle on-screen keyboard');
+    kbBtn.title = 'On-screen keyboard';
+    kbBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">' +
+      '<rect x="2.5" y="6" width="19" height="12" rx="2.2"/>' +
+      '<path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M6 13h.01M9.5 13h.01M13 13h.01M16.5 13h.01M8 15.8h8"/>' +
+      '</svg>';
+    kbBtn.addEventListener('click', function () { toggleKeyboard(); });
+
+    right.insertBefore(kbBtn, right.firstChild);
     right.insertBefore(chip, right.firstChild);
     setChip();
+  }
+
+  /* ---------- 虚拟键盘（移动键盘） ---------- */
+  function buildVkb() {
+    if (vkbEl) return vkbEl;
+    vkbEl = document.createElement('div');
+    vkbEl.className = 'ime-kb';
+    vkbEl.hidden = true;
+
+    var rows = [
+      ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
+      ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+      ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
+      ['Shift', 'z', 'x', 'c', 'v', 'b', 'n', 'm', 'Bksp']
+    ];
+    var html = '';
+    rows.forEach(function (row) {
+      html += '<div class="ime-kb-row">';
+      row.forEach(function (k) {
+        var label = k === 'Shift' ? '⇧' : k === 'Bksp' ? '⌫' : k;
+        var cls = 'kb-key' + (k === 'Shift' || k === 'Bksp' ? ' wide mod' : '');
+        var alpha = /^[a-z]$/.test(k) ? ' data-alpha="1"' : '';
+        html += '<button type="button" class="' + cls + '" data-k="' + k + '"' + alpha + '>' + label + '</button>';
+      });
+      html += '</div>';
+    });
+    html +=
+      '<div class="ime-kb-row">' +
+      '<button type="button" class="kb-key mod wide" data-k="Mode">中 / EN</button>' +
+      '<button type="button" class="kb-key mod" data-k=",">,</button>' +
+      '<button type="button" class="kb-key xwide" data-k=" ">space</button>' +
+      '<button type="button" class="kb-key mod" data-k=".">.</button>' +
+      '<button type="button" class="kb-key mod wide" data-k="Enter">↵ return</button>' +
+      '</div>';
+    vkbEl.innerHTML = html;
+
+    vkbEl.addEventListener('pointerdown', function (e) {
+      /* preventDefault：不抢输入框的焦点 */
+      e.preventDefault();
+      var b = e.target.closest('button[data-k]');
+      if (!b) return;
+      var k = b.dataset.k;
+      if (k === 'Shift') {
+        kbShift = !kbShift;
+        vkbEl.classList.toggle('shift', kbShift);
+        var sb = vkbEl.querySelector('[data-k="Shift"]');
+        if (sb) sb.classList.toggle('on', kbShift);
+        return;
+      }
+      if (k === 'Mode') { toggleMode(); return; }
+      if (kbShift && /^[a-z]$/.test(k)) k = k.toUpperCase();
+      feedKey(k);
+      if (kbShift) {
+        kbShift = false;
+        vkbEl.classList.remove('shift');
+        var sb2 = vkbEl.querySelector('[data-k="Shift"]');
+        if (sb2) sb2.classList.remove('on');
+      }
+    });
+
+    document.body.appendChild(vkbEl);
+    return vkbEl;
+  }
+
+  function toggleKeyboard(force) {
+    var el = buildVkb();
+    var show = typeof force === 'boolean' ? force : el.hidden;
+    el.hidden = !show;
+    if (kbBtn) kbBtn.classList.toggle('on', show);
+    if (show && !state.ready && state.on && state.mode === 'cn') loadDict();
+  }
+
+  /* ---------- 虚拟键盘的按键路由 ---------- */
+  function mkEvt(key, target) {
+    return {
+      type: 'keydown',
+      key: key,
+      repeat: false,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+      target: target,
+      _handled: false,
+      preventDefault: function () { this._handled = true; },
+      stopImmediatePropagation: function () { /* 合成事件，无后续监听 */ }
+    };
+  }
+
+  function feedKey(k) {
+    var el = document.activeElement && editable(document.activeElement) ? document.activeElement : null;
+
+    /* 中文模式：把按键喂给输入法状态机（走和物理键盘完全一样的逻辑） */
+    if (state.on && state.mode === 'cn' && el) {
+      state.field = el;
+      var e = mkEvt(k, el);
+      onKey(e);
+      if (e._handled) return;
+    }
+
+    /* 英文模式 / IME 关闭 / IME 没接的键：直接对焦点元素操作 */
+    if (!el) return;
+    if (k.length === 1) {
+      document.execCommand('insertText', false, k);
+      return;
+    }
+    if (k === 'Backspace') {
+      var ev = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true });
+      el.dispatchEvent(ev);
+      if (!ev.defaultPrevented) document.execCommand('delete');
+      return;
+    }
+    if (k === 'Enter') {
+      var ev2 = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+      el.dispatchEvent(ev2);
+      if (!ev2.defaultPrevented && (el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+        document.execCommand('insertText', false, '\n');
+      }
+      return;
+    }
+    if (/^Arrow/.test(k)) {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+    }
   }
 
   /* ---------- 全局事件 ---------- */
@@ -460,7 +621,8 @@
   window.addEventListener('keyup', onKey, true);
 
   window.addEventListener('pointerdown', function (e) {
-    if (bar && !bar.hidden && !bar.contains(e.target) && e.target !== state.field) clearBuf();
+    if (bar && !bar.hidden && !bar.contains(e.target) && e.target !== state.field &&
+        !(vkbEl && vkbEl.contains(e.target))) clearBuf();
   }, true);
 
   window.addEventListener('blur', clearBuf);
@@ -497,6 +659,8 @@
     get buffering() { return !!state.buf; },
     setMode: setMode,
     toggle: function () { toggleMode(); },
-    setOn: setOn
+    setOn: setOn,
+    feedKey: feedKey,
+    toggleKeyboard: toggleKeyboard
   };
 })();

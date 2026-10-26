@@ -43,6 +43,7 @@
   --cursor: #ffffff;
   --cursor-soft: rgba(255, 255, 255, 0.5);
   --star: 255, 255, 255;
+  --sel-bg: rgba(151, 161, 181, 0.38);
   --shadow: 0 26px 70px -28px rgba(0, 0, 0, 0.85), 0 2px 10px -4px rgba(0, 0, 0, 0.6);
 
   /* 语法高亮：全部取自系统调色板（强调色 / ok / warn / 灰度） */
@@ -54,7 +55,7 @@
   --syn-num: #febc2e;
   --syn-op: #9a9aa4;
   --syn-punct: #6a6a74;
-  --syn-sel: rgba(200, 200, 200, 0.34);
+  --syn-sel: var(--sel-bg);
 
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Source Han Sans SC',
     'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
@@ -92,18 +93,19 @@
   --syn-num: #8a5a00;
   --syn-op: #5a5a62;
   --syn-punct: #9a9aa1;
-  --syn-sel: rgba(0, 0, 0, 0.13);
+  --sel-bg: rgba(88, 98, 118, 0.26);
+  --syn-sel: var(--sel-bg);
 }
 
 /* ---------- 基础 ---------- */
+/* !important：下面任何 cursor: pointer / default 规则都不许再把系统指针放出来 */
 * {
   box-sizing: border-box;
-  cursor: none;
+  cursor: none !important;
 }
 
 ::selection {
-  background: rgba(200, 200, 200, 0.9);
-  color: #111;
+  background: var(--sel-bg);
 }
 
 html,
@@ -2083,3 +2085,71 @@ textarea {
   font-family: var(--font-sans);
 }
 .mb-ime.en { color: var(--muted); font-size: 11px; }
+
+/* ---------- 桌面框选 ---------- */
+.marquee {
+  position: absolute;
+  z-index: 30;
+  border-radius: 10px;
+  background: var(--sel-bg);
+  border: 1px solid var(--border-strong);
+  pointer-events: none;
+}
+.desk-icon.picked {
+  background: var(--sel-bg);
+  border-color: var(--border-strong);
+}
+
+/* ---------- 虚拟键盘（移动键盘） ---------- */
+.ime-kb {
+  position: fixed;
+  left: 50%;
+  bottom: 88px;
+  transform: translateX(-50%);
+  z-index: 99990;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(22px) saturate(1.3);
+  -webkit-backdrop-filter: blur(22px) saturate(1.3);
+  box-shadow: var(--shadow);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ime-kb[hidden] { display: none; }
+.ime-kb-row {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+.kb-key {
+  min-width: 34px;
+  height: 38px;
+  padding: 0 8px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--on-panel);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.kb-key:hover { border-color: var(--border-strong); }
+.kb-key:active { background: var(--accent); color: #fff; }
+.kb-key.wide { min-width: 64px; }
+.kb-key.xwide { min-width: 150px; }
+.kb-key.mod { color: var(--muted); font-size: 11px; }
+.kb-key.mod.on { color: var(--accent); border-color: var(--accent); }
+.ime-kb.shift .kb-key[data-alpha] { text-transform: uppercase; }
+.mb-kb {
+  width: auto;
+  padding: 0 8px;
+}
+.mb-kb.on { color: var(--accent); }
+.mb-kb svg { width: 16px; height: 16px; }
