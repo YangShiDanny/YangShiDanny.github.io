@@ -129,18 +129,27 @@
     let ry = my;
     let mode = 'idle';
 
+    /* 唯一的坐标写入点。mousemove / pointermove / 窗口拖拽 / 缩放
+       全都走这里，避免几个来源互相覆盖出"跳一下又回去"的抖动。 */
+    function syncCursor(ev) {
+      if (!ev || ev.clientX == null) return;
+      mx = ev.clientX;
+      my = ev.clientY;
+      dot.style.left = mx + 'px';
+      dot.style.top = my + 'px';
+      dot.classList.remove('is-hidden');
+      ring.classList.remove('is-hidden');
+    }
+    /* 挂到 window 上供窗口拖拽 / 缩放调用（见下方 dragWin / resizeWin） */
+    window.__lumeCursorSync = syncCursor;
+
     /* 既听 mousemove 也听 pointermove，看似重复，其实是必要的：
        拖窗口 / 拖右下角缩放走的是 pointermove（pointerdown + setPointerCapture
        那套），而在拖拽期间浏览器不保证同步派发 mousemove——
        结果就是窗口跟着走了、光标却钉在原地。
        两个事件都喂给同一个处理函数，位置写的是同一个值，重复触发无副作用。 */
     function onMove(e) {
-      mx = e.clientX;
-      my = e.clientY;
-      dot.style.left = mx + 'px';
-      dot.style.top = my + 'px';
-      dot.classList.remove('is-hidden');
-      ring.classList.remove('is-hidden');
+      syncCursor(e);
       if (e.pointerType) dot.classList.add('is-pointer');
     }
     window.addEventListener('mousemove', onMove, { passive: true });
@@ -160,21 +169,6 @@
       dot.classList.add('is-hidden');
       ring.classList.add('is-hidden');
     });
-
-    /* 拖拽 / 缩放期间，指针可能移出窗口甚至移出浏览器（setPointerCapture
-       让事件继续派发，但不保证 mousemove 同步）。所以这两处除了 pointermove
-       之外，还要主动把最新坐标写回光标，双保险。 */
-    function syncCursor(ev) {
-      if (!ev || ev.clientX == null) return;
-      mx = ev.clientX;
-      my = ev.clientY;
-      dot.style.left = mx + 'px';
-      dot.style.top = my + 'px';
-      dot.classList.remove('is-hidden');
-      ring.classList.remove('is-hidden');
-    }
-    /* 挂到 window 上供窗口拖拽 / 缩放调用（见下方 dragWin / resizeWin） */
-    window.__lumeCursorSync = syncCursor;
 
     /* 弹簧动画：原来用固定系数 0.2 做指数逼近，手感偏"粘"。
        改成带速度的弹簧，环体跟手更利落，松手后有一点回弹。 */
