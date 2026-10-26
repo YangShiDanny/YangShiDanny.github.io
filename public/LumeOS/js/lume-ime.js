@@ -26,6 +26,7 @@
   var MAX_SCAN = 6000;     // 前缀扫描上限，防止极端缓冲卡顿
   var MAX_SYLLABLE = 6;    // 单个拼音音节的搜索上限
   var DICT_URL = 'assets/ime-dict.txt';
+  var DICT_KEY = 'ime-dict';   // IndexedDB 里存词库 Blob 的键名
   var LS_MODE = 'lume.ime.mode';
   var LS_ON = 'lume.ime.on';
   var LS_USER = 'lume.ime.user';
@@ -40,7 +41,8 @@
     kind: 'empty',     // 候选来源：full / initial / mixed / phrase
     field: null,       // 正在输入的目标元素
     loading: false,
-    ready: false
+    ready: false,
+    dictCached: false  // 词库是不是从本地 DB 直接读的（没走网络）
   };
 
   var dictRows = null;   // 主词库行：每项是 "拼音\t词:频,词:频"，字典序
@@ -84,9 +86,36 @@
   function loadDict() {
     if (dictRows || state.loading) return;
     state.loading = true;
-    fetch(DICT_URL)
-      .then(function (r) { return r.text(); })
+
+    /* 必须先等版本层就绪再判命中。
+       踩过的坑：requestIdleCallback 可能在 version.json 回来之前就触发，
+       这时 B.ready 还是 false，于是一路走网络——缓存等于没做。
+       所以这里等 load() 的 Promise，而不是看 ready 快照。 */
+    const B = window.LumeBuild;
+    const gate = B && B.load ? B.load() : Promise.resolve(null);
+
+    gate
+      .then(function () {
+        /* 版本层就绪后再问：本地有没有同版本的词库？
+           有就直接用本地那份，一个字节都不下——这是「每次发网页太慢」
+           的主要来源，词库在慢网下能等好几秒。 */
+        if (!(B && B.cached) || !window.LumeStore) return null;
+        return window.LumeStore.get(DICT_KEY).then(function (rec) {
+          if (!rec || !rec.data) return null;
+          /* 只认 Blob 版本；老记录可能是 string，交给网络路径重下 */
+          return typeof rec.data.text === 'function' ? rec.data.text() : null;
+        });
+      })
       .then(function (text) {
+        if (text) return { text: text, cached: true };
+        return fetch(DICT_URL)
+          .then(function (r) { return r.text(); })
+          .then(function (t) { return { text: t, cached: false }; });
+      })
+      .then(function (res) {
+        if (!res) throw new Error('dict unavailable');
+        var text = res.text;
+
         /* 一次切分拿到全部行；两段之间用空行隔开。
            split 出来的量级是 2 万行，比 JSON.parse 快且不需要建对象。 */
         var parts = text.split('\n\n');
@@ -108,12 +137,37 @@
 
         state.ready = true;
         state.loading = false;
+        state.dictCached = res.cached;
         if (state.buf) refresh();
+
+        /* 网络下回来的存进本地，并把版本号盖上戳。
+           只在真的走网络时写，缓存命中就不必重复写盘。 */
+        if (!res.cached) persistDict(text);
       })
       .catch(function () {
         state.loading = false;
         if (bar) bar.querySelector('.ime-status').textContent = 'dict failed to load';
       });
+  }
+
+  /* 把词库文本存进 IndexedDB，并让版本层记下"这个版本已就位"。
+     存 Blob 而不是 string：Blob 走二进制路径，浏览器不会按 UTF-16
+     再翻倍膨胀，1MB 的词库落地后就是 1MB。 */
+  function persistDict(text) {
+    if (!window.LumeStore) return;
+    try {
+      var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      var B = window.LumeBuild;
+      var done = function () {
+        if (B && B.markStored) B.markStored({ dictBytes: blob.size });
+      };
+      window.LumeStore.put(DICT_KEY, blob, {
+        kind: 'ime-dict',
+        bytes: blob.size,
+        version: B ? B.version : '',
+        fingerprints: B ? B.assets : {}
+      }).then(done, function () { /* 存不下不影响使用 */ });
+    } catch (e) { /* 老浏览器没有 Blob 构造器就算了 */ }
   }
 
   /* 取一行的拼音部分（\t 之前）。二分和前缀比较都靠它。

@@ -572,6 +572,14 @@ const TerminalApp = {
           '  ▀█████████▀  ',
           '    ▀▀▀▀▀▀▀▀▀   '
         ];
+        /* cache 这一行是给「为什么这次打开很快」一个可见的解释：
+           local = 本地同版本命中，没下东西；fetched = 刚下过并存好了；
+           partial = 下了但没存成（无痕/配额满），下次还得再下 */
+        const cacheText =
+          info.cache === 'local' ? 'local · same build, nothing fetched'
+          : info.cache === 'fetched' ? 'fetched · stored for next time'
+          : info.cache === 'partial' ? 'fetched · could not store (private mode?)'
+          : 'off · version.json unavailable';
         const lines = [
           '<span class="u">lume</span>@lumeos',
           '<span class="dim">-----------</span>',
@@ -581,11 +589,15 @@ const TerminalApp = {
           `<span class="dim">WM      </span>lume-wm`,
           `<span class="dim">Uptime  </span>${esc(info.uptime)}`,
           `<span class="dim">Apps    </span>${info.apps}`,
-          `<span class="dim">Theme   </span>${esc(info.theme)}`
+          `<span class="dim">Theme   </span>${esc(info.theme)}`,
+          `<span class="dim">Build   </span>${esc(info.build)}`,
+          `<span class="dim">Cache   </span>${esc(cacheText)}`
         ];
         logo.forEach((row, i) => {
           print(`<span class="u">${esc(row)}</span>   ${lines[i] || ''}`);
         });
+        /* logo 只有 8 行，多出来的信息接在下面，不然就丢了 */
+        lines.slice(logo.length).forEach((l) => print(`                ${l}`));
         print('');
       },
 

@@ -8,7 +8,11 @@
 
   const root = document.documentElement;
   const startedAt = Date.now();
-  const BUILD = '2026.10.26';
+  /* 版本号来自构建期生成的 version.json（scripts/build-version.cjs），
+     形如 0.0.20-0f363ef。注意不能在解析时就取值——version.json 是异步
+     fetch 回来的，此处 LumeBuild 还是 'dev'。所以用 getter，等
+     systemInfo() 真被调用（用户敲 `neofetch` / `about`）时才是准的。 */
+  const buildVersion = () => (window.LumeBuild && window.LumeBuild.version) || 'dev';
 
   const $ = (sel, ctx) => (ctx || document).querySelector(sel);
   const $$ = (sel, ctx) => Array.from((ctx || document).querySelectorAll(sel));
@@ -1379,6 +1383,7 @@
   }
 
   function systemInfo() {
+    const B = window.LumeBuild;
     return {
       os: 'LumeOS 1.0 "Nebula"',
       kernel: '1.0.0-nebula',
@@ -1387,7 +1392,11 @@
       theme: root.dataset.theme === 'light' ? 'light' : 'dark',
       engine: engineName(),
       memory: (navigator.deviceMemory || 16) + ' GB',
-      build: BUILD,
+      build: buildVersion(),
+      /* 这一次打开是「本地命中」还是「刚从网络下的」，一眼能看出来。
+         三态分开：local 开场就命中；fetched 这次下了并且存好了；
+         partial 这次下了但没存成（无痕模式/配额满）。 */
+      cache: !B || !B.known ? 'off' : B.cached ? 'local' : B.stored ? 'fetched' : 'partial',
       wm: 'vanilla'
     };
   }
@@ -1580,6 +1589,530 @@
   });
 
   /* -------------------------------------------------------- */
+  /*  文本选择：自绘选区 + 选中菜单 + 手柄                        */
+  /* -------------------------------------------------------- */
+  /* 浏览器的原生 ::selection 有两个办不到的地方：
+     ① 颜色和形状由浏览器画，跟主题对不上（而且 iOS 上是固定的蓝）；
+     ② 手机里那两个蓝色水滴手柄，样式完全不可控。
+     所以这里把原生高亮改成透明，自己按 Range 的 client rects 画一层，
+     再在首尾放两个能拖的手柄。复制仍然用 Clipboard API，
+     剪贴板这块不自己实现 —— 那是系统的事。 */
+  const SEL = (function selection() {
+    const layer = document.createElement('div');
+    layer.className = 'sel-layer';
+    layer.setAttribute('aria-hidden', 'true');
+    layer.hidden = true;
+
+    const menu = document.createElement('div');
+    menu.className = 'sel-menu';
+    menu.hidden = true;
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML = `
+      <button class="sel-btn" type="button" data-sel="copy">${ICON.copy}Copy</button>
+      <button class="sel-btn" type="button" data-sel="all">${ICON.selectall}Select all</button>
+      <span class="sel-sep"></span>
+      <button class="sel-btn danger" type="button" data-sel="clear">${ICON.close}Clear</button>`;
+
+    document.body.appendChild(layer);
+    document.body.appendChild(menu);
+
+    const coarse = window.matchMedia('(pointer: coarse)');
+
+    /* 手柄只在触摸设备上出现：鼠标用户的指针本身就是"手柄"，
+       再画两个点反而挡视线。 */
+    const gripA = document.createElement('div');
+    const gripB = document.createElement('div');
+    gripA.className = 'sel-grip is-start';
+    gripB.className = 'sel-grip is-end';
+    gripA.hidden = gripB.hidden = true;
+    layer.appendChild(gripA);
+    layer.appendChild(gripB);
+
+    let boxes = [];   /* .sel-box 节点池，复用避免每次拖选都建一堆 DOM */
+    let range = null; /* 当前选区的 Range 快照 */
+    let field = null; /* 选区在 input/textarea 里时，记下那个元素 */
+    let open = false;
+
+    function box(i) {
+      while (boxes.length <= i) {
+        const b = document.createElement('div');
+        b.className = 'sel-box';
+        layer.insertBefore(b, gripA);
+        boxes.push(b);
+      }
+      return boxes[i];
+    }
+
+    function hideBoxes(from) {
+      for (let i = from; i < boxes.length; i++) boxes[i].hidden = true;
+    }
+
+    /* ---------- textarea / input 里的坐标 ---------- */
+    /* textarea 不暴露任何 layout API，拿不到字符坐标。
+       唯一的办法是造一个同款式的隐藏 div（.editor-mirror 已经有了），
+       把"光标前的文本 + 一个零宽 span"塞进去，量那个 span 的位置。 */
+    function mirrorOf(f) {
+      const host = f.closest('.editor-wrap') || f.parentNode;
+      if (!host) return null;
+      let m = host.querySelector('.editor-mirror');
+      if (!m) {
+        m = document.createElement('div');
+        m.className = 'editor-mirror';
+        host.appendChild(m);
+      }
+      const cs = getComputedStyle(f);
+      ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing',
+       'padding-top', 'padding-left', 'padding-right', 'padding-bottom',
+       'border-top-width', 'border-left-width', 'white-space', 'tab-size'].forEach((p) => {
+        m.style[p] = cs[p];
+      });
+      m.style.width = f.clientWidth + 'px';
+      return m;
+    }
+
+    /* [pos] 这个字符在 textarea 内容区里的坐标 */
+    function caretRect(f, pos) {
+      const m = mirrorOf(f);
+      if (!m) return null;
+      m.textContent = '';
+      m.appendChild(document.createTextNode(f.value.slice(0, pos)));
+      const marker = document.createElement('span');
+      marker.textContent = '\u200b';
+      marker.style.cssText = 'display:inline-block;width:0;overflow:hidden';
+      m.appendChild(marker);
+      const r = marker.getBoundingClientRect();
+      const b = m.getBoundingClientRect();
+      return {
+        left: r.left - b.left,
+        top: r.top - b.top,
+        height: r.height || parseFloat(getComputedStyle(f).lineHeight) || 18
+      };
+    }
+
+    /* 把 [start,end) 切成逐行的矩形。行数多时只取前 200 段，
+       再多的选区也没人看得清，没必要量到卡顿。 */
+    function measureField(f) {
+      const v = f.value;
+      const s = f.selectionStart;
+      const e = f.selectionEnd;
+      if (s === e) return [];
+
+      const rect = f.getBoundingClientRect();
+      const cs = getComputedStyle(f);
+      const padL = parseFloat(cs.paddingLeft) || 0;
+      const padT = parseFloat(cs.paddingTop) || 0;
+      const lineH = parseFloat(cs.lineHeight) || 18;
+      const ox = rect.left + padL - f.scrollLeft + f.clientLeft;
+      const oy = rect.top + padT - f.scrollTop + f.clientTop;
+
+      const out = [];
+      const lines = v.split('\n');
+      let pos = 0;
+      for (let li = 0; li < lines.length && out.length < 200; li++) {
+        const lineStart = pos;
+        const lineEnd = pos + lines[li].length;
+        pos = lineEnd + 1;
+
+        const a = Math.max(s, lineStart);
+        const b = Math.min(e, lineEnd);
+        if (a > b) continue;
+        /* 选区跨过了这一行的换行符：到行尾后再补一点，视觉上才连得上 */
+        const coversBreak = e > lineEnd && s <= lineEnd;
+
+        const ra = caretRect(f, a);
+        if (!ra) continue;
+        let x1 = ra.left;
+        let x2;
+        if (b === lineEnd && coversBreak && a === b) {
+          x2 = x1 + 6; /* 只选了换行符本身 */
+        } else {
+          const rb = caretRect(f, b);
+          x2 = rb ? rb.left : x1 + 6;
+          if (x2 <= x1) x2 = x1 + 6;
+        }
+
+        out.push({
+          left: ox + x1,
+          top: oy + ra.top,
+          width: Math.max(1, x2 - x1),
+          height: lineH
+        });
+      }
+      return out;
+    }
+
+    /* 当前选区的矩形列表 */
+    function rects() {
+      if (field) return measureField(field);
+      if (!range) return [];
+      return Array.from(range.getClientRects())
+        .filter((r) => r.width > 0.5 && r.height > 0.5)
+        .map((r) => ({ left: r.left, top: r.top, width: r.width, height: r.height }));
+    }
+
+    function paint(list) {
+      const n = Math.min(list.length, 400);
+      for (let i = 0; i < n; i++) {
+        const r = list[i];
+        const b = box(i);
+        b.hidden = false;
+        b.style.left = Math.round(r.left) + 'px';
+        b.style.top = Math.round(r.top) + 'px';
+        b.style.width = Math.max(1, Math.round(r.width)) + 'px';
+        b.style.height = Math.round(r.height) + 'px';
+      }
+      hideBoxes(n);
+    }
+
+    function placeGrips(list) {
+      const show = coarse.matches && open && list.length > 0;
+      gripA.hidden = gripB.hidden = !show;
+      if (!show) return;
+      const first = list[0];
+      const last = list[list.length - 1];
+      gripA.style.left = Math.round(first.left) + 'px';
+      gripA.style.top = Math.round(first.top + first.height) + 'px';
+      gripB.style.left = Math.round(last.left + last.width) + 'px';
+      gripB.style.top = Math.round(last.top + last.height) + 'px';
+    }
+
+    /* 菜单贴在选区上方居中；上方放不下就翻到下方 */
+    function placeMenu(list) {
+      if (!open || !list.length) {
+        menu.hidden = true;
+        return;
+      }
+      menu.hidden = false;
+      const mb = menu.getBoundingClientRect();
+      const top0 = Math.min.apply(null, list.map((r) => r.top));
+      const bot0 = Math.max.apply(null, list.map((r) => r.top + r.height));
+      const left0 = Math.min.apply(null, list.map((r) => r.left));
+      const right0 = Math.max.apply(null, list.map((r) => r.left + r.width));
+
+      const GAP = 10;
+      let top = top0 - mb.height - GAP;
+      let flip = false;
+      if (top < 8) {
+        top = bot0 + GAP;
+        flip = true;
+      }
+      let left = (left0 + right0) / 2 - mb.width / 2;
+      left = Math.max(8, Math.min(left, innerWidth - mb.width - 8));
+      top = Math.max(8, Math.min(top, innerHeight - mb.height - 8));
+
+      menu.style.left = Math.round(left) + 'px';
+      menu.style.top = Math.round(top) + 'px';
+      menu.style.transformOrigin = flip ? '50% 0%' : '50% 100%';
+    }
+
+    function refresh() {
+      const list = range || field ? rects() : [];
+      if (!list.length) {
+        open = false;
+        layer.hidden = true;
+        menu.hidden = true;
+        gripA.hidden = gripB.hidden = true;
+        return;
+      }
+      layer.hidden = false;
+      layer.classList.toggle('is-editor', !!field);
+      paint(list);
+      placeGrips(list);
+      if (open) placeMenu(list);
+    }
+
+    /* 读一次当前选区状态。activeElement 是 textarea 时，
+       getSelection() 拿不到它的内部选区，必须分开处理。 */
+    function sync() {
+      const ae = document.activeElement;
+      const isField = ae && (ae.tagName === 'TEXTAREA' ||
+        (ae.tagName === 'INPUT' && /^(text|search|url|email|tel)$/i.test(ae.type || 'text')));
+      if (isField && ae.selectionStart !== ae.selectionEnd) {
+        field = ae;
+        range = null;
+      } else {
+        field = null;
+        const s = getSelection();
+        range = s && !s.isCollapsed && s.rangeCount ? s.getRangeAt(0).cloneRange() : null;
+      }
+    }
+
+    /* selectionchange 在拖选时高频触发，用 rAF 合帧 */
+    let pending = 0;
+    function schedule() {
+      if (pending) return;
+      pending = requestAnimationFrame(() => {
+        pending = 0;
+        sync();
+        refresh();
+      });
+    }
+
+    function selectedText() {
+      if (field) return field.value.slice(field.selectionStart, field.selectionEnd);
+      return range ? range.toString() : '';
+    }
+
+    async function copy(text) {
+      if (!text) return false;
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (err) {
+        /* 非安全上下文 / 权限被拒：退回已经废弃但还能用的 execCommand */
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand('copy');
+          ta.remove();
+          return ok;
+        } catch (e2) {
+          return false;
+        }
+      }
+    }
+
+    function clear() {
+      /* 两条路都要走：field 可能是上一帧的快照，而用户此刻
+         可能已经把焦点搬到别的文本框了。收选区这种事宁滥勿缺。 */
+      if (field) field.setSelectionRange(field.selectionStart, field.selectionStart);
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT') &&
+          typeof ae.selectionStart === 'number') {
+        ae.setSelectionRange(ae.selectionStart, ae.selectionStart);
+      }
+      if (getSelection) getSelection().removeAllRanges();
+      open = false;
+      range = null;
+      field = null;
+      layer.hidden = true;
+      menu.hidden = true;
+      gripA.hidden = gripB.hidden = true;
+    }
+
+    /* 弹出菜单。必须先 sync() 再判断 —— rects() 依赖 range / field，
+       而这两个是上一次 schedule() 的结果。外部（双击、touchend）调进来时
+       中间可能刚换过选区，不先同步会拿到旧数据、甚至直接判成空。 */
+    function showMenu() {
+      sync();
+      if (!rects().length) return;
+      open = true;
+      refresh();
+    }
+
+    function hideMenu() {
+      open = false;
+      menu.hidden = true;
+      gripA.hidden = gripB.hidden = true;
+    }
+
+    /* ---------- 菜单 ---------- */
+    /* 点菜单不能把选区弄丢：pointerdown 上就拦住默认行为 */
+    menu.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    menu.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-sel]');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const act = btn.dataset.sel;
+
+      if (act === 'copy') {
+        const ok = await copy(selectedText());
+        toast(ok ? 'Copied' : 'Copy blocked by the browser');
+      } else if (act === 'all') {
+        if (field) {
+          field.focus();
+          field.select();
+        } else if (range) {
+          const c = range.commonAncestorContainer;
+          const host = c.nodeType === 1 ? c : c.parentElement;
+          if (host) {
+            const r = document.createRange();
+            r.selectNodeContents(host);
+            const s = getSelection();
+            s.removeAllRanges();
+            s.addRange(r);
+          }
+        }
+        schedule();
+        return;
+      } else if (act === 'clear') {
+        clear();
+        return;
+      }
+      hideMenu();
+    });
+
+    /* ---------- 事件 ---------- */
+    document.addEventListener('selectionchange', () => {
+      if (field) return;
+      schedule();
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (e.shiftKey || e.key === 'a' || e.key === 'A') schedule();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') clear();
+    });
+
+    /* 鼠标：拖选过程中只画框，松手才弹菜单（边拖边弹太分神） */
+    document.addEventListener('mouseup', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('.sel-menu, .sel-grip')) return;
+      setTimeout(() => {
+        sync();
+        if (selectedText().trim()) showMenu();
+        else hideMenu();
+      }, 0);
+    });
+
+    /* 鼠标双击选词也接管一下，颜色统一 */
+    document.addEventListener('dblclick', (e) => {
+      if (coarse.matches) return;
+      setTimeout(() => {
+        sync();
+        if (selectedText().trim()) showMenu();
+      }, 0);
+    });
+
+    /* 点空白收起。注意不能在"正要开始新的一划"时收，
+       否则一按下菜单就没了，感觉像点不中 */
+    document.addEventListener('pointerdown', (e) => {
+      if (menu.contains(e.target) || layer.contains(e.target)) return;
+      if (!open) return;
+      const s = getSelection();
+      if (s && !s.isCollapsed) return;
+      hideMenu();
+    });
+
+    window.addEventListener('scroll', () => { if (open) schedule(); }, true);
+    window.addEventListener('resize', () => { if (open) schedule(); });
+
+    /* ---------- 手柄拖拽 ---------- */
+    /* 拖手柄时不去改浏览器的选区（会跟它抢），
+       而是记住另一端作为锚点，用手指下的位置重设选区。
+       这样拖到窗口外也能连续扩展。 */
+    let drag = null;
+
+    function caretAt(x, y) {
+      if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
+      if (document.caretPositionFromPoint) {
+        const p = document.caretPositionFromPoint(x, y);
+        if (!p) return null;
+        const r = document.createRange();
+        r.setStart(p.offsetNode, p.offset);
+        r.collapse(true);
+        return r;
+      }
+      return null;
+    }
+
+    function startGrip(which) {
+      return (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const s = getSelection();
+        if (!s.rangeCount) return;
+        const r = s.getRangeAt(0);
+        drag = which === 'start'
+          ? { which, node: r.endContainer, offset: r.endOffset }
+          : { which, node: r.startContainer, offset: r.startOffset };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+      };
+    }
+
+    function moveGrip(which) {
+      return (e) => {
+        if (!drag || drag.which !== which) return;
+        e.preventDefault();
+        const p = caretAt(e.clientX, e.clientY);
+        if (!p) return;
+        const s = getSelection();
+        const nr = document.createRange();
+        try {
+          if (which === 'start') {
+            nr.setStart(p.startContainer, p.startOffset);
+            nr.setEnd(drag.node, drag.offset);
+          } else {
+            nr.setStart(drag.node, drag.offset);
+            nr.setEnd(p.startContainer, p.startOffset);
+          }
+          if (nr.collapsed) return;
+          s.removeAllRanges();
+          s.addRange(nr);
+        } catch (err) {
+          /* 跨了不可选区域会抛，跳过这一帧 */
+          return;
+        }
+        range = nr.cloneRange();
+        const list = rects();
+        paint(list);
+        placeGrips(list);
+        placeMenu(list);
+        window.__lumeCursorSync?.(e);
+      };
+    }
+
+    function endGrip() {
+      drag = null;
+    }
+
+    gripA.addEventListener('pointerdown', startGrip('start'));
+    gripB.addEventListener('pointerdown', startGrip('end'));
+    gripA.addEventListener('pointermove', moveGrip('start'));
+    gripB.addEventListener('pointermove', moveGrip('end'));
+    window.addEventListener('pointerup', endGrip);
+    window.addEventListener('pointercancel', endGrip);
+
+    /* 触摸双击：某些浏览器双击后触发 selectionchange 的时机很晚，
+       而且 dblclick 在触摸设备上根本不来。这里自己判双击 ——
+       两次 touchend 间隔 < 320ms 且位移 < 24px 就算。
+       选中一个词交给浏览器（它能按语言分词），我们只负责接管后续：
+       等它落定后弹菜单、放出手柄。 */
+    let lastTap = 0;
+    let lastPt = null;
+    window.addEventListener('touchend', (e) => {
+      if (!coarse.matches) return;
+      const t = e.changedTouches && e.changedTouches[0];
+      if (!t) return;
+      const now = Date.now();
+      const near = lastPt && Math.hypot(t.clientX - lastPt.x, t.clientY - lastPt.y) < 24;
+      const dbl = now - lastTap < 320 && near;
+      lastTap = now;
+      lastPt = { x: t.clientX, y: t.clientY };
+
+      /* 等浏览器把词选好。双击选词不是同步完成的 ——
+         它在 touchend 之后才由系统拼出选区范围。 */
+      setTimeout(() => {
+        sync();
+        if (!selectedText().trim()) return;
+        /* 第一次点也要能弹菜单（有些浏览器长按不选词），
+           双击则一定会选，两者都走同一条路 */
+        showMenu();
+      }, dbl ? 60 : 0);
+    }, { passive: true });
+
+    /* 给 app 用：换文件 / 切预览时清掉残留选区 */
+    window.LumeSel = {
+      clear,
+      refresh: schedule,
+      toastless: true,
+      get text() { return selectedText(); },
+      get active() { return open; }
+    };
+
+    return { showMenu, hideMenu, clear, refresh: schedule };
+  })();
+
+  /* -------------------------------------------------------- */
   /*  长按 = 右键（触摸设备）                                    */
   /* -------------------------------------------------------- */
   (function longPress() {
@@ -1598,6 +2131,22 @@
     let target = null;
     let halo = null;
     let fired = false;
+
+    /* 这个元素上按下去，是不是"想选文字"？
+       判据是它自己（或直接子节点）有实在的文字，并且它不是一个按钮式的控件。
+       窗口标题栏、Dock、桌面图标、工具栏按钮都算控件，走右键菜单；
+       终端输出、文档正文、关于页这类大片文字走选区。 */
+    function looksLikeText(node) {
+      if (!node || node.nodeType !== 1) return false;
+      if (node.closest('button, a, [role="button"], .win-titlebar, .dock, .menubar, .desk-icon, .editor-bar, .brw-bar')) {
+        return false;
+      }
+      const txt = (node.textContent || '').trim();
+      if (txt.length < 2) return false;
+      /* 只有文字、没有交互子元素（除了裸的 span/b/i/em 这类内联标记） */
+      const interactive = node.querySelector('button, a, input, textarea, select, [role="button"]');
+      return !interactive;
+    }
 
     function ensureHalo() {
       if (halo && halo.isConnected) return halo;
@@ -1684,11 +2233,17 @@
         const touch = e.touches[0];
         const el0 = document.elementFromPoint(touch.clientX, touch.clientY);
         if (!el0) return;
-        /* 输入框里长按要留给系统的光标 / 选择手柄，
-           否则没法选词、没法拖动插入点 */
+        /* 输入框里长按要留给系统去放插入点 —— 我们只要它选中的结果，
+           不要在它还活着的时候抢走手势 */
         if (el0.closest('input, textarea, [contenteditable="true"]')) return;
-        /* 滚动容器里长按也可能是想选文字，那些交给浏览器 */
-        if (el0.closest('.ime-kb, .menu, #spotlight, #veil, .boot')) return;
+        /* 浮层自己不参与 */
+        if (el0.closest('.ime-kb, .menu, #spotlight, #veil, .boot, .sel-menu, .sel-grip')) return;
+
+        /* 按在成片的文字上（终端输出、文档正文、关于页……）时，
+           用户想要的是「选中这段」，不是「桌面右键菜单」。
+           这里先让浏览器自己完成选词，松手后由 SEL 接管弹菜单 ——
+           所以整段长按直接放给系统，不弹自己的右键菜单。 */
+        if (looksLikeText(el0)) return;
 
         origin = { x: touch.clientX, y: touch.clientY };
         target = el0;

@@ -44,6 +44,8 @@
   --cursor-soft: rgba(255, 255, 255, 0.5);
   --star: 255, 255, 255;
   --sel-bg: rgba(151, 161, 181, 0.38);
+  /* 自绘文本选区的填充：暗色底下是透明白，能叠在任何背景上而不发浑 */
+  --sel-fill: rgba(255, 255, 255, 0.22);
   --shadow: 0 26px 70px -28px rgba(0, 0, 0, 0.85), 0 2px 10px -4px rgba(0, 0, 0, 0.6);
 
   /* 语法高亮：全部取自系统调色板（强调色 / ok / warn / 灰度） */
@@ -94,6 +96,7 @@
   --syn-op: #5a5a62;
   --syn-punct: #9a9aa1;
   --sel-bg: rgba(88, 98, 118, 0.26);
+  --sel-fill: rgba(0, 0, 0, 0.16);
   --syn-sel: var(--sel-bg);
 }
 
@@ -104,8 +107,66 @@
   cursor: none !important;
 }
 
-::selection {
-  background: var(--sel-bg);
+/* ---------- 文本选择 ----------
+   默认全站不可选：这个桌面里拖窗口、拖图标很频繁，
+   文字被顺手带上一层蓝底是最烦的干扰。
+   需要读的正文（终端输出、文档、关于页…）单独标 .selectable 放开，
+   放开之后原生高亮仍然是透明的 —— 视觉由 .sel-box 自绘，
+   这样颜色和手机手柄才归我们管。
+
+   关键：想选中的地方**必须真的 user-select: text**。
+   只把 ::selection 涂透明而不放开 user-select 是不行的，
+   浏览器压根不产生选区，双击选词、拖选都会失效。 */
+* {
+  -webkit-user-select: none;
+  user-select: none;
+  /* iOS 长按弹的系统气泡（拷贝/查询/分享）样式改不了，还会盖住我们的菜单 */
+  -webkit-touch-callout: none;
+}
+
+/* 可读正文：放开选择，高亮交给自绘层。
+   这些是"读"的内容 —— 终端输出、文档正文、渲染后的 Markdown、帮助页。
+   窗口外壳、工具栏、Dock、桌面图标仍然不可选。 */
+.selectable,
+.selectable *,
+.term-out,
+.term-out *,
+.about,
+.about *,
+.tips-doc,
+.tips-doc *,
+.lic-doc,
+.lic-doc *,
+.editor-md,
+.editor-md *,
+.brw-block-text,
+.brw-frame {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* 输入类元素永远能选，否则打不了字 */
+input,
+textarea,
+[contenteditable='true'],
+[contenteditable=''] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* 原生高亮一律透明 —— 蓝底换成 .sel-box。
+   这里用 !important 是因为浏览器默认 ::selection 优先级很高，
+   不压住的话在部分内核上仍会漏出一点蓝。 */
+::selection,
+*::selection {
+  background: transparent !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+}
+::-moz-selection,
+*::-moz-selection {
+  background: transparent !important;
+  color: transparent !important;
 }
 
 html,
@@ -1958,11 +2019,14 @@ textarea {
   color: transparent;
   -webkit-text-fill-color: transparent;
 }
+/* 原生选区一律透明 —— 高亮由 .sel-box 自绘，这里只负责别让蓝色漏出来 */
 .editor-area::selection {
-  background: var(--syn-sel);
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 .editor-area.is-code::selection {
-  background: var(--syn-sel);
+  background: transparent;
   color: transparent;
   -webkit-text-fill-color: transparent;
 }
@@ -2725,6 +2789,149 @@ textarea {
 .desk-icon.picked {
   background: var(--sel-bg);
   border-color: var(--border-strong);
+}
+
+/* ---------- 自绘文本选区 ----------
+   原生 ::selection 的颜色和形状都不受控，这里改由 JS 按 Range 的 client rects
+   着一块块 .sel-box（每行一块），完全跟主题走。
+   颜色用 --sel-fill：暗色下是半透明白，亮色下是半透明黑 —— 不用强调蓝，
+   因为整站是黑白语言，蓝色高亮会像另一个系统的零件。 */
+.sel-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 99990; /* 在窗口之上、光标之下（光标 999999） */
+  pointer-events: none;
+  overflow: hidden;
+}
+.sel-box {
+  position: absolute;
+  background: var(--sel-fill);
+  border-radius: 2px;
+  pointer-events: none;
+}
+/* 编辑器里一块行会很高（整行），圆角小一点更像文本选区 */
+.sel-layer.is-editor .sel-box {
+  border-radius: 1px;
+}
+
+/* ---------- 选区手柄（触摸设备） ----------
+   两个点一左一右贴在选区首尾，拖着改范围。
+   命中区比视觉大得多（用 padding + 负 margin 撑开），手指才抓得住。 */
+.sel-grip {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--panel), 0 1px 4px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 2;
+}
+.sel-grip::after {
+  /* 撑大的命中区：视觉 12px，实际 44px */
+  content: '';
+  position: absolute;
+  inset: -16px;
+  border-radius: 50%;
+}
+.sel-grip.is-start { transform: translate(-1px, 0); }
+.sel-grip.is-end { transform: translate(1px, 0); }
+.sel-grip:active {
+  background: var(--text);
+}
+
+/* 手柄拖出来的范围提示线：告诉用户"还在选，只是手挡住了" */
+.sel-tip {
+  position: absolute;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0.5;
+  pointer-events: none;
+  border-radius: 1px;
+}
+
+/* ---------- 选中后弹出的动作条 ----------
+   不是右键菜单那种大列表，是窄窄一条浮在选区上方的小药丸。
+   手机上它必须在手指够得着的位置，所以默认贴选区上沿，
+   顶部放不下就翻到下方（JS 负责判定）。 */
+.sel-menu {
+  position: fixed;
+  z-index: 99995;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 11px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(22px) saturate(1.4);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  box-shadow: var(--shadow);
+  transform-origin: 50% 100%;
+  animation: sel-menu-in 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+  user-select: none;
+}
+.sel-menu[hidden] {
+  display: none;
+}
+@keyframes sel-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.sel-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--on-panel);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.sel-btn:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.sel-btn:active {
+  transform: scale(0.96);
+}
+.sel-btn svg {
+  width: 13px;
+  height: 13px;
+  opacity: 0.75;
+}
+.sel-btn.danger {
+  color: var(--danger);
+}
+.sel-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--glass-line);
+  margin: 0 1px;
+}
+/* 手机上加宽点击区，但不加高，免得挡视线 */
+@media (pointer: coarse) {
+  .sel-btn {
+    padding: 9px 12px;
+    font-size: 13px;
+  }
+  .sel-btn svg {
+    width: 15px;
+    height: 15px;
+  }
 }
 
 /* ---------- 虚拟键盘（移动键盘） ---------- */

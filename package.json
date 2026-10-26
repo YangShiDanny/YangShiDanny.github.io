@@ -6,8 +6,10 @@
     "node": ">=22.23.4"
   },
   "scripts": {
-    "dev": "/usr/bin/node node_modules/astro/bin/astro.mjs dev",
-    "build": "/usr/bin/node node_modules/astro/bin/astro.mjs build",
+    "version:gen": "/usr/bin/node scripts/build-version.cjs",
+    "version:check": "/usr/bin/node scripts/build-version.cjs --check",
+    "dev": "/usr/bin/node scripts/build-version.cjs && /usr/bin/node node_modules/astro/bin/astro.mjs dev",
+    "build": "/usr/bin/node scripts/build-version.cjs && /usr/bin/node node_modules/astro/bin/astro.mjs build",
     "preview": "/usr/bin/node node_modules/astro/bin/astro.mjs preview",
     "astro": "/usr/bin/node node_modules/astro/bin/astro.mjs"
   },
