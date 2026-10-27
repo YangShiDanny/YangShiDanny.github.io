@@ -1049,8 +1049,14 @@
     if (k === 'Enter') {
       var ev2 = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
       el.dispatchEvent(ev2);
-      if (!ev2.defaultPrevented && (el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+      if (ev2.defaultPrevented) return;
+      if (el.tagName === 'TEXTAREA' || el.isContentEditable) {
         document.execCommand('insertText', false, '\n');
+      } else if (el.form) {
+        /* 合成 keydown 不带浏览器「回车隐式提交表单」的行为，
+           终端输入框正是靠 form 的 submit 收命令的 —— 这里补上。 */
+        if (typeof el.form.requestSubmit === 'function') el.form.requestSubmit();
+        else el.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
       }
       return;
     }

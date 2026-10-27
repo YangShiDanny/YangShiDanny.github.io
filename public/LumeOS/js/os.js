@@ -168,11 +168,91 @@
        那套），而在拖拽期间浏览器不保证同步派发 mousemove——
        结果就是窗口跟着走了、光标却钉在原地。
        两个事件都喂给同一个处理函数，位置写的是同一个值，重复触发无副作用。 */
+
+    /* ---------- 滚动条拖拽时的光标补偿 ----------
+       Chromium 在拖原生滚动条滑块时把 pointer/mouse 事件全部吃掉
+       （Scrollbar::HandlePointerEvent 对 thumb 的 down/move/up 一律
+       return true），页面一个事件都收不到，光标就钉在原地不动。
+       补偿思路：scroll 事件照常发。若「最近见过光标 · 光标就落在
+       滑块上 · 近期没有收到过 pointerdown（滑块上的按下事件被吞了）」
+       而 scroll 还在发生，就按滑块几何反推光标位置喂给 syncCursor。
+       估算有 ±半个滑块高的误差，但比冻结强得多；一旦收到任何真实
+       事件（onMove / pointerdown）立刻退出估算模式。 */
+    let sbMode = null;
+    const lastSeen = { x: 0, y: 0, t: 0 };
+    let lastDown = 0;
+
+    function thumbMetrics(t) {
+      const r = t.getBoundingClientRect();
+      const bw = t.offsetWidth - t.clientWidth; /* 竖滚动条宽度（含边框） */
+      if (!(t.scrollHeight > t.clientHeight + 1) || bw <= 0) return null;
+      const trackH = t.clientHeight;
+      const travel = t.scrollHeight - t.clientHeight;
+      const th = Math.max(24, Math.round((trackH * trackH) / t.scrollHeight));
+      const tt = travel > 0 ? (t.scrollTop / travel) * (trackH - th) : 0;
+      return {
+        x0: r.left + t.clientLeft + t.clientWidth,
+        x1: r.right,
+        top: r.top + t.clientTop + tt,
+        bottom: r.top + t.clientTop + tt + th
+      };
+    }
+
     function onMove(e) {
+      sbMode = null; /* 真实事件回来了，估算作废 */
+      lastSeen.x = e.clientX;
+      lastSeen.y = e.clientY;
+      lastSeen.t = performance.now();
       syncCursor(e);
     }
     window.addEventListener('mousemove', onMove, { passive: true });
     window.addEventListener('pointermove', onMove, { passive: true });
+
+    window.addEventListener(
+      'pointerdown',
+      () => {
+        lastDown = performance.now();
+        sbMode = null;
+      },
+      { passive: true, capture: true }
+    );
+
+    /* scroll 不冒泡但会走捕获阶段 —— 挂在 document 上一个就能看住所有元素 */
+    document.addEventListener(
+      'scroll',
+      (e) => {
+        const t = e.target;
+        if (!(t instanceof Element)) return;
+        const now = performance.now();
+        if (sbMode && now > sbMode.until) sbMode = null;
+
+        if (sbMode && sbMode.el === t) {
+          const tr = thumbMetrics(t);
+          if (!tr) {
+            sbMode = null;
+            return;
+          }
+          syncCursor({ clientX: sbMode.x, clientY: tr.top + sbMode.off });
+          sbMode.until = now + 3000;
+          return;
+        }
+        if (now - lastDown < 400) return; /* 刚点过内容 —— 是普通点击/拖拽 */
+        if (now - lastSeen.t > 1500) return; /* 光标坐标太旧，不可信 */
+        const tr = thumbMetrics(t);
+        if (!tr) return;
+        if (lastSeen.x < tr.x0 - 4 || lastSeen.x > tr.x1 + 4) return;
+        if (lastSeen.y < tr.top - 6 || lastSeen.y > tr.bottom + 6) return;
+        /* 光标就在滑块上、scroll 在走、又没收到 pointerdown —— 只能是拖滑块 */
+        sbMode = {
+          el: t,
+          x: (tr.x0 + tr.x1) / 2,
+          off: Math.min(Math.max(lastSeen.y - tr.top, 0), tr.bottom - tr.top),
+          until: now + 3000
+        };
+        syncCursor({ clientX: sbMode.x, clientY: tr.top + sbMode.off });
+      },
+      { capture: true, passive: true }
+    );
 
     /* 拖拽期间给光标挂个 is-dragging：圆点略收一点，表示"抓住了"。
        不做拉伸 —— 白点被拉长会变成一颗花生。 */
@@ -1593,6 +1673,18 @@
     openCtxAt(e.target, e.clientX, e.clientY);
   });
 
+  /* Edge 独有的「mini menu」：拖选文字后自动弹出 copy/search 那一小条，
+     它不触发 contextmenu 事件，上面的拦不住。网页端唯一有效的抑制手段
+     是在有非空选区的 mouseup 上 preventDefault（点空处收选区是 collapsed，
+     不受影响）。输入框不拦 —— 拦了可能吃掉 textarea 拖选的落点。 */
+  if (/Edg\//.test(navigator.userAgent)) {
+    window.addEventListener('mouseup', (e) => {
+      if (e.target.closest('input, textarea, [contenteditable]')) return;
+      const s = window.getSelection();
+      if (s && !s.isCollapsed) e.preventDefault();
+    });
+  }
+
   /* -------------------------------------------------------- */
   /*  文本选择：自绘选区 + 选中菜单 + 手柄                        */
   /* -------------------------------------------------------- */
@@ -1704,11 +1796,13 @@
 
       const rect = f.getBoundingClientRect();
       const cs = getComputedStyle(f);
-      const padL = parseFloat(cs.paddingLeft) || 0;
-      const padT = parseFloat(cs.paddingTop) || 0;
       const lineH = parseFloat(cs.lineHeight) || 18;
-      const ox = rect.left + padL - f.scrollLeft + f.clientLeft;
-      const oy = rect.top + padT - f.scrollTop + f.clientTop;
+      /* caretRect 量的是「marker 相对镜子 border-box」的偏移，而镜子带着和
+         textarea 同款的 padding —— 结果里已经含 padL/padT，这里只补边框
+         (clientLeft/Top) 和滚动量。再叠一次 padding 会让选区框整体下移
+         一个 padT、右移一个 padL（编辑器里就是「掉到下一行」）。 */
+      const ox = rect.left + f.clientLeft - f.scrollLeft;
+      const oy = rect.top + f.clientTop - f.scrollTop;
 
       const out = [];
       const lines = v.split('\n');
@@ -1812,6 +1906,17 @@
 
     function refresh() {
       const list = range || field ? rects() : [];
+
+      /* 选区滚出视口后矩形依然存在（只是坐标在屏幕外），
+         若照常绘制，框会画到视口外、菜单还会被 placeMenu 的
+         钳制行为强行按在窗口里 —— 表现为「内容滚走了，复制/全选
+         还挂在原地」。所以先按视口过滤：全部出屏就整体隐藏，
+         但不清 selection 状态，滚回来 schedule() 会重新画出来。 */
+      const M = 48; /* 容差：半露的行、菜单 GAP 都算可见 */
+      const vis = list.filter((r) =>
+        r.top < innerHeight + M && r.top + r.height > -M &&
+        r.left < innerWidth + M && r.left + r.width > -M);
+
       if (!list.length) {
         open = false;
         layer.hidden = true;
@@ -1819,10 +1924,24 @@
         gripA.hidden = gripB.hidden = true;
         return;
       }
-      layer.hidden = false;
-      layer.classList.toggle('is-editor', !!field);
-      paint(list);
-      placeGrips(list);
+      if (!vis.length) {
+        layer.hidden = true;
+        menu.hidden = true;
+        gripA.hidden = gripB.hidden = true;
+        return;
+      }
+      /* 鼠标设备：高亮交给原生 ::selection（画在文字后面，不挡笔画）。
+         涂层盖在文字上方，再淡也会压住内容，所以只在触摸设备上画 ——
+         那里需要拖拽手柄；菜单、复制/全选照常在两端工作。 */
+      if (coarse.matches) {
+        layer.hidden = false;
+        layer.classList.toggle('is-editor', !!field);
+        paint(list);
+        placeGrips(list);
+      } else {
+        layer.hidden = true;
+        gripA.hidden = gripB.hidden = true;
+      }
       if (open) placeMenu(list);
     }
 
@@ -1998,8 +2117,10 @@
       hideMenu();
     });
 
-    window.addEventListener('scroll', () => { if (open) schedule(); }, true);
-    window.addEventListener('resize', () => { if (open) schedule(); });
+    /* 图层可见（触摸端选区框）或菜单开着，滚动/缩放都得重算 ——
+       桌面端图层恒隐藏（高亮走原生 ::selection），只能靠 open 兜住菜单。 */
+    window.addEventListener('scroll', () => { if (!layer.hidden || open) schedule(); }, true);
+    window.addEventListener('resize', () => { if (!layer.hidden || open) schedule(); });
 
     /* ---------- 手柄拖拽 ---------- */
     /* 拖手柄时不去改浏览器的选区（会跟它抢），

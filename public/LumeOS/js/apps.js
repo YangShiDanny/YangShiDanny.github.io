@@ -552,8 +552,52 @@ const TerminalApp = {
         }
 
         if (sub === 'run') {
-          print(`<span class="err">py: the runtime is installed, but wiring it into the VM is not done yet.</span>`);
-          printDim('`py setup` and `py status` work today; `py run` lands in a later pass.');
+          const file = args[1];
+          if (!file) {
+            print(`<span class="err">py: usage: py run &lt;file.py&gt;</span>`);
+            return;
+          }
+          const full = LumeFS.resolve(cwd, file);
+          const code = LumeFS.read(full);
+          if (code == null) {
+            print(`<span class="err">py: no such file: ${esc(full)}</span>`);
+            return;
+          }
+          if (!window.LumePy) {
+            print(`<span class="err">py: runtime module not loaded</span>`);
+            return;
+          }
+          if (state.pyBusy) {
+            printDim('python is still busy with the last run — give it a second');
+            return;
+          }
+          state.pyBusy = true;
+          const t0 = performance.now();
+          /* 引导是异步的（解 bz2 / 拉 wasm 都要几秒），终端命令本身同步返回，
+             后续输出靠 print 回来即可。 */
+          window.LumePy
+            .boot((s) => printDim(s))
+            .then((py) => {
+              /* stdout/stderr 逐行接进终端；print 里会做 esc */
+              py.setStdout({ batched: (s) => print(esc(s)) });
+              py.setStderr({ batched: (s) => print(`<span class="err">${esc(s)}</span>`) });
+              return py.runPythonAsync(code).then((v) => {
+                const ms = Math.round(performance.now() - t0);
+                if (v !== undefined && v !== null) printDim('=> ' + String(v));
+                print(`<span class="u">done</span> <span class="dim">· ${ms} ms</span>`);
+              });
+            })
+            .catch((e) => {
+              const msg = e && e.message ? e.message : String(e);
+              const lines = msg.split('\n').filter((l) => l.trim());
+              /* traceback 最有用的信息在末尾，倒着最多给 12 行 */
+              const tail = lines.slice(-12);
+              if (lines.length > tail.length) printDim(`… ${lines.length - tail.length} more lines`);
+              tail.forEach((l) => print(`<span class="err">${esc(l)}</span>`));
+            })
+            .finally(() => {
+              state.pyBusy = false;
+            });
           return;
         }
 
@@ -974,7 +1018,11 @@ const FilesApp = {
         if (act === 'new') {
           const box = tool.getBoundingClientRect();
           window.LumeOS.closeMenus();
-          areaMenu(box.left - 60, box.bottom + 6);
+          /* 必须等到本轮 click 冒泡结束再开菜单：document 上有个「点空白收菜单」
+             的监听，会把刚打开的 #ctx-menu 立刻关掉（因为 + 按钮不在菜单里），
+             于是菜单闪一下就没了，加号看着像没反应。setTimeout(0) 让这次 click
+             先跑完冒泡 → 关干净 → 再开新菜单。 */
+          setTimeout(() => areaMenu(box.left - 60, box.bottom + 6), 0);
         }
         return;
       }
@@ -1820,9 +1868,13 @@ const BrowserApp = {
         </div>
 
         <div class="brw-view">
+          <!-- 沙箱不给 allow-popups：页面里 target="_blank" / window.open 的链接
+               会在真实浏览器（Edge）里开新标签页、直接跳出 LumeOS。
+               拦下之后这类点击不再外逃，普通链接照常在框内跳转；
+               真想开出去走工具栏的「Open in real browser」按钮。 -->
           <iframe class="brw-frame" data-frame
                   referrerpolicy="no-referrer"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+                  sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
           <div class="brw-block" data-block hidden>
             <div class="brw-block-inner">
               <div class="brw-block-ico">${ICON.external}</div>
