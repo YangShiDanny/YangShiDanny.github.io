@@ -23,6 +23,16 @@ const LumeBuild = (function () {
   const DB_KEY = 'build';           // IndexedDB 里存版本记录的那一格
   const LS_SEEN = 'lume.build.seen'; // localStorage 里记"上次见到的版本"，纯做统计
 
+  /* 本地开发（localhost / 127.0.0.1 / ::1）不做缓存判定：
+     构建产物随时在变，version.json 又常常是 dev 兜底，
+     比对没有意义 —— 每次都直接走网络重新下载。 */
+  const IS_LOCAL = typeof location !== 'undefined' &&
+    /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/.test(location.hostname);
+
+  /* 参与判定的资源指纹键。任何一项对不上（或任一侧缺失）
+     都算 build 不匹配 → 整体重下。 */
+  const FP_KEYS = ['dict', 'css', 'js'];
+
   /* 拿不到 version.json 时的兜底：不缓存、每次都拉，宁可慢别出错 */
   const FALLBACK = {
     version: 'dev',
@@ -72,6 +82,11 @@ const LumeBuild = (function () {
   /* 比对本地记录。这里只读不写——写入由 markStored() 在资源落地后做，
      否则会出现"版本记上了但资源没存成"的假缓存。 */
   function compare() {
+    /* 本地开发永远不算命中：资源每次都重新下载 */
+    if (IS_LOCAL) {
+      cached = false;
+      return Promise.resolve();
+    }
     if (!info.known || !window.LumeStore) {
       cached = false;
       return Promise.resolve();
@@ -83,13 +98,15 @@ const LumeBuild = (function () {
           return;
         }
         prevVersion = rec.meta.version || '';
-        const same = prevVersion === info.version;
-        /* 版本号一致还要核指纹：同一 commit 下重新构建（改了别处又发一次）
-           也可能让资源变了，指纹对不上就不算命中。
-           指纹任一侧缺失时按「不命中」处理——宁可多下一次，不能用错版本。 */
+        /* build 编号必须完全一致：版本串里带着「第几次构建 + commit 短哈希」，
+           任何一头变了都是新 build → 整体重下 */
+        const same = prevVersion === info.version && (rec.meta.commit || '') === (info.commit || '');
+        /* build 一致还不够，逐项核资源指纹：同一 commit 下重新构建
+           也可能让资源变了。任一项缺失或对不上都按「不命中」处理 ——
+           宁可多下一次，不能用错版本。 */
         const pr = rec.meta.fingerprints || {};
         const cu = info.assets || {};
-        const fpOk = !!cu.dict && !!pr.dict && pr.dict === cu.dict;
+        const fpOk = FP_KEYS.every((k) => !!cu[k] && !!pr[k] && pr[k] === cu[k]);
         cached = same && fpOk;
       })
       .catch(() => {
@@ -109,6 +126,8 @@ const LumeBuild = (function () {
      于是 describe()/neofetch 报「命中」——可这一次明明下载了。 */
   function markStored(extra) {
     if (!info.known || !window.LumeStore) return Promise.resolve(false);
+    /* 本地开发不写缓存记录 —— 反正每次都要重下，写了也是假缓存 */
+    if (IS_LOCAL) return Promise.resolve(false);
     const meta = Object.assign(
       {
         version: info.version,
@@ -147,6 +166,7 @@ const LumeBuild = (function () {
      优先说「本次开幕时怎么回事」，再说事后有没有写盘。 */
   function describe() {
     if (!info.known) return 'build unknown (version.json missing)';
+    if (IS_LOCAL) return info.version + '  ·  local dev, always fetch';
     if (cached) return info.version + '  ·  cached, no download';
     if (prevVersion) return info.version + '  ·  updated from ' + prevVersion;
     if (stored) return info.version + '  ·  fetched, now stored';
@@ -163,6 +183,10 @@ const LumeBuild = (function () {
     },
     get known() {
       return info.known;
+    },
+    /* 是否本地开发环境（不缓存、每次都拉） */
+    get local() {
+      return IS_LOCAL;
     },
     /* 本次打开时本地是否已有同版本资源。
        这是开场快照，load() 完成后再也不会变。

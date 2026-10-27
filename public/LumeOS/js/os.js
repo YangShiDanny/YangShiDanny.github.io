@@ -169,18 +169,29 @@
        结果就是窗口跟着走了、光标却钉在原地。
        两个事件都喂给同一个处理函数，位置写的是同一个值，重复触发无副作用。 */
 
-    /* ---------- 滚动条拖拽时的光标补偿 ----------
+    /* ---------- 拖滚动条滑块：隐藏光标 ----------
        Chromium 在拖原生滚动条滑块时把 pointer/mouse 事件全部吃掉
        （Scrollbar::HandlePointerEvent 对 thumb 的 down/move/up 一律
        return true），页面一个事件都收不到，光标就钉在原地不动。
-       补偿思路：scroll 事件照常发。若「最近见过光标 · 光标就落在
-       滑块上 · 近期没有收到过 pointerdown（滑块上的按下事件被吞了）」
-       而 scroll 还在发生，就按滑块几何反推光标位置喂给 syncCursor。
-       估算有 ±半个滑块高的误差，但比冻结强得多；一旦收到任何真实
-       事件（onMove / pointerdown）立刻退出估算模式。 */
+       试过按滑块几何反推坐标，但估算位置和真实指针总差半拍，
+       按需求改为：判定出「正在拖滑块」就隐藏光标，收到第一个真实
+       指针事件（松手后随便动一下）立即恢复。检测手段不变 ——
+       「光标就在滑块上 + scroll 在走 + 近期没有 pointerdown」
+       只可能是拖滑块。 */
     let sbMode = null;
     const lastSeen = { x: 0, y: 0, t: 0 };
     let lastDown = 0;
+
+    function sbHide(on) {
+      dot.classList.toggle('is-hidden', on);
+      ring.classList.toggle('is-hidden', on);
+    }
+    function sbEnd() {
+      if (sbMode) {
+        sbMode = null;
+        sbHide(false);
+      }
+    }
 
     function thumbMetrics(t) {
       const r = t.getBoundingClientRect();
@@ -199,7 +210,7 @@
     }
 
     function onMove(e) {
-      sbMode = null; /* 真实事件回来了，估算作废 */
+      sbEnd(); /* 真实事件回来了，隐藏态解除 */
       lastSeen.x = e.clientX;
       lastSeen.y = e.clientY;
       lastSeen.t = performance.now();
@@ -212,7 +223,7 @@
       'pointerdown',
       () => {
         lastDown = performance.now();
-        sbMode = null;
+        sbEnd();
       },
       { passive: true, capture: true }
     );
@@ -224,16 +235,13 @@
         const t = e.target;
         if (!(t instanceof Element)) return;
         const now = performance.now();
-        if (sbMode && now > sbMode.until) sbMode = null;
 
-        if (sbMode && sbMode.el === t) {
-          const tr = thumbMetrics(t);
-          if (!tr) {
-            sbMode = null;
+        if (sbMode) {
+          if (sbMode.el !== t || now > sbMode.until || !thumbMetrics(t)) {
+            sbEnd();
             return;
           }
-          syncCursor({ clientX: sbMode.x, clientY: tr.top + sbMode.off });
-          sbMode.until = now + 3000;
+          sbMode.until = now + 3000; /* 还在拖：维持隐藏 */
           return;
         }
         if (now - lastDown < 400) return; /* 刚点过内容 —— 是普通点击/拖拽 */
@@ -243,13 +251,8 @@
         if (lastSeen.x < tr.x0 - 4 || lastSeen.x > tr.x1 + 4) return;
         if (lastSeen.y < tr.top - 6 || lastSeen.y > tr.bottom + 6) return;
         /* 光标就在滑块上、scroll 在走、又没收到 pointerdown —— 只能是拖滑块 */
-        sbMode = {
-          el: t,
-          x: (tr.x0 + tr.x1) / 2,
-          off: Math.min(Math.max(lastSeen.y - tr.top, 0), tr.bottom - tr.top),
-          until: now + 3000
-        };
-        syncCursor({ clientX: sbMode.x, clientY: tr.top + sbMode.off });
+        sbMode = { el: t, until: now + 3000 };
+        sbHide(true);
       },
       { capture: true, passive: true }
     );
@@ -591,6 +594,9 @@
       y = Math.min(Math.max(y, 0), area.height - 46);
       node.style.left = x + 'px';
       node.style.top = y + 'px';
+      /* 窗口带着选区移动时，自绘选区框是按屏幕坐标画的，
+         必须跟着重算，否则框留在原地（表现为"选区偏移"） */
+      if (window.LumeSel) window.LumeSel.refresh();
     }
     function up() {
       node.classList.remove('dragging');
@@ -612,6 +618,7 @@
       if (window.__lumeCursorSync) window.__lumeCursorSync(ev);
       node.style.width = Math.max(340, ev.clientX - rect.left) + 'px';
       node.style.height = Math.max(220, ev.clientY - rect.top) + 'px';
+      if (window.LumeSel) window.LumeSel.refresh();
     }
     function up() {
       window.removeEventListener('pointermove', move);
@@ -1675,11 +1682,26 @@
 
   /* Edge 独有的「mini menu」：拖选文字后自动弹出 copy/search 那一小条，
      它不触发 contextmenu 事件，上面的拦不住。网页端唯一有效的抑制手段
-     是在有非空选区的 mouseup 上 preventDefault（点空处收选区是 collapsed，
-     不受影响）。输入框不拦 —— 拦了可能吃掉 textarea 拖选的落点。 */
+     是在有非空选区的 mouseup 上 preventDefault。输入框不拦 —— 拦了可能
+     吃掉 textarea 拖选的落点。
+     关键：只拦「拖选结束」的那次 mouseup。原地单击时 mouseup 一刻选区
+     还没塌缩，无脑 preventDefault 会把浏览器收起选区/放光标的默认行为
+     一并吃掉 —— 表现为「点一下选区不消失」。用按下→松开的位移区分：
+     拖选位移大，单击几乎为零。 */
   if (/Edg\//.test(navigator.userAgent)) {
+    let mdX = 0;
+    let mdY = 0;
+    window.addEventListener(
+      'mousedown',
+      (e) => {
+        mdX = e.clientX;
+        mdY = e.clientY;
+      },
+      { capture: true, passive: true }
+    );
     window.addEventListener('mouseup', (e) => {
       if (e.target.closest('input, textarea, [contenteditable]')) return;
+      if (Math.hypot(e.clientX - mdX, e.clientY - mdY) < 6) return;
       const s = window.getSelection();
       if (s && !s.isCollapsed) e.preventDefault();
     });
@@ -2108,12 +2130,20 @@
     });
 
     /* 点空白收起。注意不能在"正要开始新的一划"时收，
-       否则一按下菜单就没了，感觉像点不中 */
+       否则一按下菜单就没了，感觉像点不中。
+       触摸端还有个毛病：点一下别处浏览器经常不收起选区，
+       自绘框就赖在原地 —— 所以左键按下时干脆主动清掉整个选区
+       （右键除外，右键菜单的复制还要用；输入框让浏览器自己管）。 */
     document.addEventListener('pointerdown', (e) => {
       if (menu.contains(e.target) || layer.contains(e.target)) return;
+      if (e.button === 0 && !e.target.closest('input, textarea, [contenteditable]')) {
+        const s = getSelection();
+        if (s && !s.isCollapsed) {
+          clear();
+          return;
+        }
+      }
       if (!open) return;
-      const s = getSelection();
-      if (s && !s.isCollapsed) return;
       hideMenu();
     });
 
