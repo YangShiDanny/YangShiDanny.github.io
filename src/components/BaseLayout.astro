@@ -39,6 +39,11 @@ const { title = t.siteTitle, is404 = false } = Astro.props;
       const path = location.pathname;
       const isZhPath = path.startsWith('/zh');
 
+      /* 静态资源/子应用（LumeOS、下载文件、字体、图标）不走语言跳转 ——
+         它们没有多语言版本。之前 /LumeOS/ 在 dev 下 404 时，
+         404 页里这段脚本会把路径拼成 /zh/LumeOS/，越跳越偏。 */
+      if (/^\/(LumeOS|downloads|fonts|icons)\b/.test(path)) return;
+
       let targetLang;
       if (storedLang) {
         targetLang = storedLang;

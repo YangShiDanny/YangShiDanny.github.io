@@ -8,6 +8,25 @@ export default defineConfig({
   // 开启HTML压缩（Astro7默认是jsx，这里显式打开）
   compressHTML: true,
   vite: {
+    plugins: [
+      {
+        /* dev 专属：public/ 子目录的 index.html 兜底。
+           Astro dev 不为 public 下的目录路径提供 index.html
+           （/LumeOS/ 会 404，线上由静态服务器兜底，dev 只能自己补）。
+           只在开发服务器里把 /LumeOS/ 重写到 /LumeOS/index.html，
+           不影响构建产物。 */
+        name: 'lumeos-public-index',
+        apply: 'serve',
+        configureServer(server) {
+          server.middlewares.use((req, _res, next) => {
+            if (req.url && /^\/LumeOS\/?$/.test(req.url.split('?')[0])) {
+              req.url = req.url.endsWith('/') ? req.url + 'index.html' : req.url + '/index.html';
+            }
+            next();
+          });
+        }
+      }
+    ],
     build: {
       minify: true,
       // 不输出sourcemap

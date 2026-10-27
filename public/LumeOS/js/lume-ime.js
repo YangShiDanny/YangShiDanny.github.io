@@ -54,6 +54,32 @@
   var kbShift = false;   // 虚拟键盘的 Shift 状态
   var shiftSolo = false; // 独立按下 Shift（中间没碰别的键）
 
+  /* 虚拟键盘的几何：left/top 为 null 表示"默认居中贴底" */
+  var KB_GEOM_KEY = 'lume.ime.kb.geom';
+  var KB_MIN = 0.7;      // 最小缩放（再小键帽就点不准了）
+  var KB_MAX = 1.6;
+  var kbGeom = loadGeom();
+
+  function loadGeom() {
+    var g = null;
+    try {
+      g = JSON.parse(localStorage.getItem(KB_GEOM_KEY) || 'null');
+    } catch (e) {
+      g = null;
+    }
+    g = g || {};
+    return {
+      left: typeof g.left === 'number' ? g.left : null,
+      top: typeof g.top === 'number' ? g.top : null,
+      scale: typeof g.scale === 'number' ? Math.min(KB_MAX, Math.max(KB_MIN, g.scale)) : 1
+    };
+  }
+  function saveGeom() {
+    try {
+      localStorage.setItem(KB_GEOM_KEY, JSON.stringify(kbGeom));
+    } catch (e) { /* 存不下无所谓，下次默认位置 */ }
+  }
+
   /* ---------- 用户词频 ---------- */
   function loadUser() {
     try {
@@ -451,6 +477,9 @@
     if (!el) return false;
     var tag = el.tagName;
     if (el.isContentEditable) return true;
+    /* 兜底判 contenteditable 属性：环境不支持 isContentEditable 时也能认出来 */
+    var ce = el.getAttribute && el.getAttribute('contenteditable');
+    if (ce === '' || ce === 'true') return true;
     if (tag === 'TEXTAREA') return true;
     if (tag === 'INPUT') {
       var t = (el.type || 'text').toLowerCase();
@@ -757,7 +786,12 @@
   function setOn(v, quiet) {
     state.on = !!v;
     try { localStorage.setItem(LS_ON, state.on ? '1' : '0'); } catch (e) { /* noop */ }
-    if (!state.on) clearBuf();
+    if (!state.on) {
+      clearBuf();
+      /* 关掉 IME 就把系统键盘放回来，否则用户彻底没键盘可用 */
+      releaseShield();
+      toggleKeyboard(false);
+    }
     setChip();
     if (!quiet) document.dispatchEvent(new CustomEvent('lume:ime'));
   }
@@ -937,6 +971,48 @@
   }
 
   /* ---------- 虚拟键盘（移动键盘） ---------- */
+
+  /* 把 kbGeom 贴到元素上。left/top 为 null 时清掉内联样式，
+     退回 CSS 的"居中贴底" —— 双击标题栏就恢复这个状态。 */
+  function applyGeom() {
+    if (!vkbEl) return;
+    vkbEl.style.setProperty('--kb', String(kbGeom.scale || 1));
+    if (kbGeom.left == null || kbGeom.top == null) {
+      vkbEl.style.left = '';
+      vkbEl.style.top = '';
+      vkbEl.style.bottom = '';
+      vkbEl.style.transform = '';
+      return;
+    }
+    vkbEl.style.left = kbGeom.left + 'px';
+    vkbEl.style.top = kbGeom.top + 'px';
+    vkbEl.style.bottom = 'auto';
+    vkbEl.style.transform = 'none';
+    clampGeom();
+  }
+
+  /* 别让键盘被拖到屏幕外：至少整块留在视口内（窗口很小则贴边） */
+  function clampGeom() {
+    if (!vkbEl || kbGeom.left == null || kbGeom.top == null) return;
+    var r = vkbEl.getBoundingClientRect();
+    /* 隐藏状态下没有布局（宽高为 0），此时钳制会算错 —— 等显示时再钳 */
+    if (!r.width || !r.height) return;
+    var maxL = Math.max(6, window.innerWidth - r.width - 6);
+    var maxT = Math.max(6, window.innerHeight - r.height - 6);
+    var l = Math.min(Math.max(kbGeom.left, 6), maxL);
+    var t = Math.min(Math.max(kbGeom.top, 6), maxT);
+    if (l !== kbGeom.left || t !== kbGeom.top) {
+      kbGeom.left = l;
+      kbGeom.top = t;
+      vkbEl.style.left = l + 'px';
+      vkbEl.style.top = t + 'px';
+    }
+  }
+
+  window.addEventListener('resize', function () {
+    if (vkbEl && !vkbEl.hidden) clampGeom();
+  });
+
   function buildVkb() {
     if (vkbEl) return vkbEl;
     vkbEl = document.createElement('div');
@@ -968,7 +1044,94 @@
       '<button type="button" class="kb-key mod" data-k=".">.</button>' +
       '<button type="button" class="kb-key mod wide" data-k="Enter">↵ return</button>' +
       '</div>';
-    vkbEl.innerHTML = html;
+    vkbEl.innerHTML =
+      '<div class="ime-kb-bar">' +
+      '<span class="ime-kb-title"><span class="ime-kb-dots"></span>keyboard</span>' +
+      '<button type="button" class="ime-kb-close" aria-label="Close keyboard">×</button>' +
+      '</div>' +
+      html +
+      '<div class="ime-kb-grip" role="separator" aria-label="Resize keyboard"></div>';
+
+    /* ---- 拖动：整条标题栏都是抓手 ---- */
+    var kbBar = vkbEl.querySelector('.ime-kb-bar');
+    kbBar.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('.ime-kb-close')) return;
+      if (e.button != null && e.button !== 0) return;
+      e.preventDefault();
+      var r = vkbEl.getBoundingClientRect();
+      var offX = e.clientX - r.left;
+      var offY = e.clientY - r.top;
+      vkbEl.classList.add('dragging');
+      try {
+        kbBar.setPointerCapture(e.pointerId);
+      } catch (err) { /* 部分浏览器对非活动指针会抛错 */ }
+
+      function move(ev) {
+        kbGeom.left = ev.clientX - offX;
+        kbGeom.top = ev.clientY - offY;
+        vkbEl.style.left = kbGeom.left + 'px';
+        vkbEl.style.top = kbGeom.top + 'px';
+        vkbEl.style.bottom = 'auto';
+        vkbEl.style.transform = 'none';
+        clampGeom();
+      }
+      function up() {
+        vkbEl.classList.remove('dragging');
+        kbBar.removeEventListener('pointermove', move);
+        kbBar.removeEventListener('pointerup', up);
+        kbBar.removeEventListener('pointercancel', up);
+        saveGeom();
+      }
+      kbBar.addEventListener('pointermove', move);
+      kbBar.addEventListener('pointerup', up);
+      kbBar.addEventListener('pointercancel', up);
+    });
+    /* 双击标题栏：回到默认位置和大小 */
+    kbBar.addEventListener('dblclick', function (e) {
+      if (e.target.closest('.ime-kb-close')) return;
+      kbGeom.left = null;
+      kbGeom.top = null;
+      kbGeom.scale = 1;
+      applyGeom();
+      saveGeom();
+    });
+    vkbEl.querySelector('.ime-kb-close').addEventListener('click', function () {
+      toggleKeyboard(false);
+    });
+
+    /* ---- 缩放：右下角抓手，按"宽度比例"换算系数 ---- */
+    var kbGrip = vkbEl.querySelector('.ime-kb-grip');
+    kbGrip.addEventListener('pointerdown', function (e) {
+      if (e.button != null && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var startX = e.clientX;
+      var startScale = kbGeom.scale || 1;
+      var baseW = vkbEl.getBoundingClientRect().width / startScale; /* 系数 1 时的宽度 */
+      /* 极端情况（还没布局）宽度是 0，除下去会得 Infinity，给个兜底 */
+      if (!(baseW > 0)) baseW = 340;
+      vkbEl.classList.add('resizing');
+      try {
+        kbGrip.setPointerCapture(e.pointerId);
+      } catch (err) { /* 同上 */ }
+
+      function move(ev) {
+        var next = (baseW * startScale + (ev.clientX - startX)) / baseW;
+        kbGeom.scale = Math.min(KB_MAX, Math.max(KB_MIN, next));
+        vkbEl.style.setProperty('--kb', String(kbGeom.scale));
+        clampGeom();
+      }
+      function up() {
+        vkbEl.classList.remove('resizing');
+        kbGrip.removeEventListener('pointermove', move);
+        kbGrip.removeEventListener('pointerup', up);
+        kbGrip.removeEventListener('pointercancel', up);
+        saveGeom();
+      }
+      kbGrip.addEventListener('pointermove', move);
+      kbGrip.addEventListener('pointerup', up);
+      kbGrip.addEventListener('pointercancel', up);
+    });
 
     vkbEl.addEventListener('pointerdown', function (e) {
       /* preventDefault：不抢输入框的焦点 */
@@ -995,6 +1158,7 @@
     });
 
     document.body.appendChild(vkbEl);
+    applyGeom(); /* 恢复上次拖动/缩放的位置和大小 */
     return vkbEl;
   }
 
@@ -1003,7 +1167,94 @@
     var show = typeof force === 'boolean' ? force : el.hidden;
     el.hidden = !show;
     if (kbBtn) kbBtn.classList.toggle('on', show);
+    /* 显示之后才有布局，这时再把上次的位置钳回视口内 */
+    if (show) clampGeom();
     if (show && !state.ready && state.on && state.mode === 'cn') loadDict();
+  }
+
+  /* ---------- 屏蔽系统虚拟键盘 ----------
+     触屏上点输入框，系统软键盘会顶掉半个屏幕，而且和自绘键盘抢地方。
+     想让"只出自绘键盘"，就得让浏览器别弹自家的：
+       · inputmode="none"        —— iOS 12.2+ / Chromium 都认，输入框仍能
+                                    获得焦点和光标，只是不弹键盘
+       · virtualkeyboardpolicy="manual" —— Chromium 94+，contenteditable 用
+     都必须在**聚焦之前**打上（触屏上 focus 一发生键盘就起来了），
+     所以挂在 pointerdown 捕获阶段，focusin 再补一次兜底。
+     IME 总开关关掉时把标记撤掉 —— 那时候用户就是要用系统键盘。 */
+  var SHIELD_ATTRS = ['inputmode', 'virtualkeyboardpolicy', 'autocapitalize', 'autocorrect'];
+  var shielded = []; /* 打过标记的元素，关 IME 时要能还原 */
+
+  function touchLike() {
+    try {
+      if (window.matchMedia('(pointer: coarse)').matches) return true;
+      /* 触屏笔记本：主指针是鼠标，但屏幕本身能点 */
+      if (navigator.maxTouchPoints > 0 && window.matchMedia('(any-pointer: coarse)').matches) return true;
+    } catch (e) { /* 老浏览器没有 matchMedia，按桌面处理 */ }
+    return false;
+  }
+
+  function shieldField(el) {
+    if (!state.on || !editable(el)) return false;
+    if (!el.getAttribute) return false;
+    /* 已经是 none 就别重复写（每次 pointerdown 都会走到这） */
+    if (el.getAttribute('inputmode') === 'none') return true;
+    if (shielded.indexOf(el) < 0) shielded.push(el);
+    el.setAttribute('inputmode', 'none');
+    /* 只在 contenteditable 上生效，input/textarea 上写了也无副作用 */
+    var ce = el.getAttribute('contenteditable');
+    if (el.isContentEditable || ce === '' || ce === 'true') {
+      el.setAttribute('virtualkeyboardpolicy', 'manual');
+    }
+    el.setAttribute('autocapitalize', 'off');
+    el.setAttribute('autocorrect', 'off');
+    el.setAttribute('spellcheck', 'false');
+    return true;
+  }
+
+  function releaseShield() {
+    shielded.forEach(function (el) {
+      SHIELD_ATTRS.forEach(function (a) { el.removeAttribute(a); });
+      el.removeAttribute('spellcheck');
+    });
+    shielded = [];
+  }
+
+  function bindNativeKeyboardShield() {
+    /* 捕获阶段 + pointerdown：一定早于浏览器决定要不要弹键盘 */
+    document.addEventListener(
+      'pointerdown',
+      function (e) {
+        if (!state.on) return;
+        var el = e.target && e.target.closest
+          ? e.target.closest('input, textarea, [contenteditable="true"], [contenteditable=""]')
+          : null;
+        if (el) {
+          var ok = shieldField(el);
+          /* 触屏：点输入框就把自绘键盘带出来。放在 pointerdown 而不是
+             focusin，是因为键盘可能已被用户手动关掉、此时不会再触发 focus。 */
+          if (ok && touchLike()) toggleKeyboard(true);
+        }
+      },
+      true
+    );
+
+    /* focus 兜底：程序化 focus、或者 pointerdown 被别处吃掉的情况 */
+    document.addEventListener('focusin', function (e) {
+      var el = e.target;
+      if (!editable(el)) return;
+      var ok = shieldField(el);
+      /* 触屏上让自绘键盘自动跟出来，不然焦点在输入框里却"没键盘可打" */
+      if (ok && touchLike()) toggleKeyboard(true);
+    });
+
+    /* 焦点离开到非输入元素时收起自绘键盘（点键盘本身不算，因为
+       键盘 pointerdown 已经 preventDefault，焦点不会跑） */
+    document.addEventListener('focusout', function (e) {
+      if (!editable(e.target)) return;
+      setTimeout(function () {
+        if (!editable(document.activeElement)) toggleKeyboard(false);
+      }, 0);
+    });
   }
 
   /* ---------- 虚拟键盘的按键路由 ---------- */
@@ -1091,6 +1342,7 @@
   function boot() {
     buildChip();
     setChip();
+    bindNativeKeyboardShield();
     if (state.mode === 'cn') loadDict();
   }
 

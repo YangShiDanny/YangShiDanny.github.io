@@ -44,8 +44,10 @@
   --cursor-soft: rgba(255, 255, 255, 0.5);
   --star: 255, 255, 255;
   --sel-bg: rgba(151, 161, 181, 0.38);
-  /* 自绘文本选区的填充：暗色底下是透明白，能叠在任何背景上而不发浑 */
-  --sel-fill: rgba(255, 255, 255, 0.22);
+  /* 自绘文本选区的填充：暗色底下是透明白，能叠在任何背景上而不发浑。
+     浓度别超过 0.2 —— 涂层盖在文字上方，太白会把笔画糊掉。 */
+  --sel-fill: rgba(255, 255, 255, 0.16);
+  --sel-r: 4px; /* 选区圆角：整段的外轮廓用这个半径 */
   --shadow: 0 26px 70px -28px rgba(0, 0, 0, 0.85), 0 2px 10px -4px rgba(0, 0, 0, 0.6);
 
   /* 语法高亮：全部取自系统调色板（强调色 / ok / warn / 灰度） */
@@ -96,7 +98,7 @@
   --syn-op: #5a5a62;
   --syn-punct: #9a9aa1;
   --sel-bg: rgba(88, 98, 118, 0.26);
-  --sel-fill: rgba(0, 0, 0, 0.16);
+  --sel-fill: rgba(0, 0, 0, 0.12);
   --syn-sel: var(--sel-bg);
 }
 
@@ -151,16 +153,19 @@ textarea,
   user-select: text;
 }
 
-/* 原生选区：用主题色高亮。原生高亮画在文字**后面**，选中文字永远清晰；
-   自绘涂层（.sel-box）盖在文字上方，再淡也会压住笔画，已改为只在
-   触摸设备上绘制（那里需要拖拽手柄），鼠标端不再涂。 */
+/* 原生选区涂透明。
+   为什么要放弃原生高亮：它的形状完全由浏览器决定，box-shadow/border-radius
+   一律无效 —— 想要圆角就只能自己画。所以高低亮统一由 .sel-box 接管
+   （每行一块，只有整段外轮廓带圆角，见下方 .sel-box 一节）。
+   涂透明而不是留一点底色，是因为原生块是直角的：留一点点，圆角外侧
+   就会露出四个直角小尖，反而更脏。 */
 ::selection,
 *::selection {
-  background: var(--sel-fill);
+  background: transparent;
 }
 ::-moz-selection,
 *::-moz-selection {
-  background: var(--sel-fill);
+  background: transparent;
 }
 
 html,
@@ -1981,14 +1986,13 @@ textarea {
   color: transparent;
   -webkit-text-fill-color: transparent;
 }
-/* 编辑器原生选区：跟全站一致用主题色，画在文字后面不挡笔画。
-   is-code 时 textarea 文字透明、字形在下面的高亮层，原生高亮
-   正好垫在两层之间当底色。 */
+/* 编辑器里的选区也交给自绘层（原生高亮已全站涂透明）。
+   is-code 时 textarea 的文字本来就让位给下面的高亮层，选中与否都透明。 */
 .editor-area::selection {
-  background: var(--sel-fill);
+  background: transparent;
 }
 .editor-area.is-code::selection {
-  background: var(--sel-fill);
+  background: transparent;
 }
 
 /* ---------- 补全浮层（跟右键菜单同一套材质） ---------- */
@@ -2752,8 +2756,8 @@ textarea {
 }
 
 /* ---------- 自绘文本选区 ----------
-   原生 ::selection 的颜色和形状都不受控，这里改由 JS 按 Range 的 client rects
-   着一块块 .sel-box（每行一块），完全跟主题走。
+   原生 ::selection 的颜色和形状都不受控（加不了圆角），这里改由 JS 按
+   Range 的 client rects 着一块块 .sel-box（每行一块），完全跟主题走。
    颜色用 --sel-fill：暗色下是半透明白，亮色下是半透明黑 —— 不用强调蓝，
    因为整站是黑白语言，蓝色高亮会像另一个系统的零件。 */
 .sel-layer {
@@ -2766,12 +2770,26 @@ textarea {
 .sel-box {
   position: absolute;
   background: var(--sel-fill);
-  border-radius: 2px;
   pointer-events: none;
+  /* 圆角不由每块自己决定：JS 给首行加 .is-top、末行加 .is-bottom，
+     中间行保持方角。逐行都圆的话，行与行的接缝会咬出一排小凹口。 */
 }
-/* 编辑器里一块行会很高（整行），圆角小一点更像文本选区 */
-.sel-layer.is-editor .sel-box {
-  border-radius: 1px;
+.sel-box.is-top {
+  border-top-left-radius: var(--sel-r);
+  border-top-right-radius: var(--sel-r);
+}
+.sel-box.is-bottom {
+  border-bottom-left-radius: var(--sel-r);
+  border-bottom-right-radius: var(--sel-r);
+}
+/* 编辑器里的行高更紧凑，圆角收一点才不会显得鼓 */
+.sel-layer.is-editor .sel-box.is-top {
+  border-top-left-radius: calc(var(--sel-r) - 1px);
+  border-top-right-radius: calc(var(--sel-r) - 1px);
+}
+.sel-layer.is-editor .sel-box.is-bottom {
+  border-bottom-left-radius: calc(var(--sel-r) - 1px);
+  border-bottom-right-radius: calc(var(--sel-r) - 1px);
 }
 
 /* ---------- 选区手柄（触摸设备） ----------
@@ -2902,8 +2920,8 @@ textarea {
   transform: translateX(-50%);
   z-index: 99990;
   display: grid;
-  gap: 6px;
-  padding: 10px;
+  gap: calc(6px * var(--kb));
+  padding: calc(10px * var(--kb));
   border-radius: 14px;
   background: var(--glass);
   border: 1px solid var(--glass-line);
@@ -2912,23 +2930,119 @@ textarea {
   box-shadow: var(--shadow);
   user-select: none;
   -webkit-user-select: none;
+  /* 可拖可缩放：--kb 是缩放系数，键帽尺寸全按它算；
+     拖动/缩放后的位置和系数由 JS 写在 style 上（并持久化） */
+  --kb: 1;
 }
 .ime-kb[hidden] { display: none; }
+
+/* 顶部拖拽条：整条都是抓手 */
+.ime-kb-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -4px -2px 0;
+  padding: 2px 2px 4px;
+  cursor: grab;
+  touch-action: none;
+}
+.ime-kb-bar:active,
+.ime-kb.dragging .ime-kb-bar {
+  cursor: grabbing;
+}
+/* 三道小横杠，暗示"可以拖" */
+.ime-kb-dots {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--on-panel);
+  opacity: 0.28;
+  box-shadow: 0 4px 0 currentColor, 0 -4px 0 currentColor;
+}
+.ime-kb.dragging .ime-kb-dots,
+.ime-kb-bar:hover .ime-kb-dots {
+  opacity: 0.6;
+}
+.ime-kb-title {
+  font: 10px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+}
+.ime-kb-close {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: 14px/1 var(--font-mono);
+  cursor: pointer;
+  padding: 0;
+}
+.ime-kb-close:hover {
+  color: var(--on-panel);
+  border-color: var(--border);
+  background: var(--panel-2);
+}
+
+/* 右下角缩放抓手：视觉 14px，命中区撑到 30px */
+.ime-kb-grip {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  touch-action: none;
+  z-index: 2;
+}
+.ime-kb-grip::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+.ime-kb-grip::before {
+  /* 两道斜线，标准的缩放角标 */
+  content: '';
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 9px;
+  height: 9px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  border-bottom-right-radius: 2px;
+  opacity: 0.7;
+}
+.ime-kb-grip:hover::before {
+  border-color: var(--on-panel);
+  opacity: 1;
+}
 .ime-kb-row {
   display: flex;
-  gap: 6px;
+  gap: calc(6px * var(--kb));
   justify-content: center;
 }
 .kb-key {
-  min-width: 34px;
-  height: 38px;
-  padding: 0 8px;
-  border-radius: 9px;
+  min-width: calc(34px * var(--kb));
+  height: calc(38px * var(--kb));
+  padding: 0 calc(8px * var(--kb));
+  border-radius: calc(9px * var(--kb));
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--on-panel);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: calc(13px * var(--kb));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2936,9 +3050,9 @@ textarea {
 }
 .kb-key:hover { border-color: var(--border-strong); }
 .kb-key:active { background: var(--accent); color: #fff; }
-.kb-key.wide { min-width: 64px; }
-.kb-key.xwide { min-width: 150px; }
-.kb-key.mod { color: var(--muted); font-size: 11px; }
+.kb-key.wide { min-width: calc(64px * var(--kb)); }
+.kb-key.xwide { min-width: calc(150px * var(--kb)); }
+.kb-key.mod { color: var(--muted); font-size: calc(11px * var(--kb)); }
 .kb-key.mod.on { color: var(--accent); border-color: var(--accent); }
 .ime-kb.shift .kb-key[data-alpha] { text-transform: uppercase; }
 .mb-kb {

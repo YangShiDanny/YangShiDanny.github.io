@@ -1877,6 +1877,11 @@
         const r = list[i];
         const b = box(i);
         b.hidden = false;
+        /* 圆角只落在整段的外轮廓上：首行圆上角、末行圆下角，中间行方角。
+           逐行都圆的话，行与行的接缝会咬出一排小凹口。 */
+        b.className = 'sel-box' +
+          (i === 0 ? ' is-top' : '') +
+          (i === n - 1 ? ' is-bottom' : '');
         b.style.left = Math.round(r.left) + 'px';
         b.style.top = Math.round(r.top) + 'px';
         b.style.width = Math.max(1, Math.round(r.width)) + 'px';
@@ -1952,18 +1957,13 @@
         gripA.hidden = gripB.hidden = true;
         return;
       }
-      /* 鼠标设备：高亮交给原生 ::selection（画在文字后面，不挡笔画）。
-         涂层盖在文字上方，再淡也会压住内容，所以只在触摸设备上画 ——
-         那里需要拖拽手柄；菜单、复制/全选照常在两端工作。 */
-      if (coarse.matches) {
-        layer.hidden = false;
-        layer.classList.toggle('is-editor', !!field);
-        paint(list);
-        placeGrips(list);
-      } else {
-        layer.hidden = true;
-        gripA.hidden = gripB.hidden = true;
-      }
+      /* 两端都画自绘选区框：原生 ::selection 的形状由浏览器决定，
+         圆角加不上，所以高亮统一归我们管（触摸设备额外多两个拖拽手柄：
+         鼠标用户的指针本身就是手柄，再画两个点反而挡视线）。 */
+      layer.hidden = false;
+      layer.classList.toggle('is-editor', !!field);
+      paint(list);
+      placeGrips(list);
       if (open) placeMenu(list);
     }
 
