@@ -161,11 +161,11 @@ textarea,
    就会露出四个直角小尖，反而更脏。 */
 ::selection,
 *::selection {
-  background: transparent;
+  background: transparent !important;
 }
 ::-moz-selection,
 *::-moz-selection {
-  background: transparent;
+  background: transparent !important;
 }
 
 html,

@@ -1871,17 +1871,102 @@
         .map((r) => ({ left: r.left, top: r.top, width: r.width, height: r.height }));
     }
 
+    /* 两块选区矩形是不是"贴着"的（下面那块顶着上面那块，且横向有交集）。
+       容差 1.5px：行盒之间常因四舍五入/行高取整漏出 1px 的缝，
+       按 0 判会把本该连成一片的段落判成一行一块。 */
+    const JOIN_TOL = 1.5;
+    function joined(a, b) {
+      if (!a || !b) return false;
+      /* 只认"b 在 a 下方且贴住"：缝隙超过容差算两块；
+         重叠（负数）说明行盒本来就互相咬合，算连着。 */
+      if (b.top - (a.top + a.height) > JOIN_TOL) return false;
+      const overlapX = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left);
+      return overlapX > 0.5;
+    }
+
+    /* 给每块矩形标上"上方/下方是不是贴着另一块"，圆角靠它决定。
+       必须在裁剪之前用原始几何算：裁过的块贴在裁剪边界上，
+       拿裁剪后的坐标去比会把连着的段落判成一块一块。 */
+    function markJoins(list) {
+      for (let i = 0; i < list.length; i++) {
+        list[i].up = joined(list[i - 1], list[i]);
+        list[i].down = joined(list[i], list[i + 1]);
+      }
+      return list;
+    }
+
+    /* 矩形是按文档坐标算的，而 .sel-layer 只会按视口裁剪（overflow: hidden）。
+       窗口内容区、textarea 自己的滚动框这些「容器裁剪」它管不了 ——
+       于是选区滚出窗口后，框还会继续画在窗口外面（桌面上）。
+       这里沿祖先链收集裁剪框，把每块矩形夹进去，夹没了就不画。
+
+       视口本身也当成一个裁剪框，顺便省掉"整块滚出屏幕还在画"的情况。 */
+    function clipToBoxes(list) {
+      const boxes = [{ x0: 0, y0: 0, x1: innerWidth, y1: innerHeight }];
+
+      const push = (el, ox, oy) => {
+        /* clientWidth/Height 已经扣掉边框和滚动条，正好是内容可见区 */
+        if (el.clientWidth <= 0 || el.clientHeight <= 0) return; /* 还没排版 / 已隐藏 */
+        const b = el.getBoundingClientRect();
+        boxes.push({
+          x0: ox === 'visible' ? -Infinity : b.left + el.clientLeft,
+          x1: ox === 'visible' ? Infinity : b.left + el.clientLeft + el.clientWidth,
+          y0: oy === 'visible' ? -Infinity : b.top + el.clientTop,
+          y1: oy === 'visible' ? Infinity : b.top + el.clientTop + el.clientHeight
+        });
+      };
+
+      /* textarea / input：它自己的内容区就是裁剪框（文字会滚出去） */
+      if (field) push(field, 'auto', 'auto');
+
+      /* 再往上找所有 overflow != visible 的祖先（窗口外壳就是这种） */
+      let el = field || (range && range.startContainer);
+      if (el && el.nodeType !== 1) el = el.parentElement;
+      while (el && el !== document.body && el !== document.documentElement) {
+        const cs = getComputedStyle(el);
+        /* overflowX/Y 和简写 overflow 都要看：有的环境（jsdom）只忠实反映
+           简写，不拆到两个轴上；拿不到计算值时按 visible 处理，别误裁。 */
+        const parts = (cs.overflow || '').trim().split(/\s+/).filter(Boolean);
+        const shX = parts[0] || '';
+        const shY = parts[1] || shX;
+        const axis = (raw, sh) =>
+          raw && raw !== 'visible' ? raw : sh && sh !== 'visible' ? sh : 'visible';
+        const cx = axis(cs.overflowX, shX);
+        const cy = axis(cs.overflowY, shY);
+        if (cx !== 'visible' || cy !== 'visible') push(el, cx, cy);
+        el = el.parentElement;
+      }
+
+      const out = [];
+      for (const r of list) {
+        let x0 = r.left;
+        let y0 = r.top;
+        let x1 = r.left + r.width;
+        let y1 = r.top + r.height;
+        for (const b of boxes) {
+          if (x0 < b.x0) x0 = b.x0;
+          if (x1 > b.x1) x1 = b.x1;
+          if (y0 < b.y0) y0 = b.y0;
+          if (y1 > b.y1) y1 = b.y1;
+        }
+        if (x1 - x0 < 0.6 || y1 - y0 < 0.6) continue; /* 完全被裁掉 */
+        out.push({ left: x0, top: y0, width: x1 - x0, height: y1 - y0, up: r.up, down: r.down });
+      }
+      return out;
+    }
+
     function paint(list) {
       const n = Math.min(list.length, 400);
       for (let i = 0; i < n; i++) {
         const r = list[i];
         const b = box(i);
         b.hidden = false;
-        /* 圆角只落在整段的外轮廓上：首行圆上角、末行圆下角，中间行方角。
-           逐行都圆的话，行与行的接缝会咬出一排小凹口。 */
-        b.className = 'sel-box' +
-          (i === 0 ? ' is-top' : '') +
-          (i === n - 1 ? ' is-bottom' : '');
+        /* 圆角按几何关系判：贴着的那一边保持方角，悬空的那一边才圆。
+           —— 贴合的行（正文、终端）连成一片，只有整段外轮廓是圆的，
+              中间不会在接缝处咬出一排小凹口；
+           —— 行与行之间真有边距时（行距大、每行独立成块），两块各自四角
+              全圆，中间的圆角就不会"断开"了。 */
+        b.className = 'sel-box' + (r.up ? '' : ' is-top') + (r.down ? '' : ' is-bottom');
         b.style.left = Math.round(r.left) + 'px';
         b.style.top = Math.round(r.top) + 'px';
         b.style.width = Math.max(1, Math.round(r.width)) + 'px';
@@ -1934,16 +2019,6 @@
     function refresh() {
       const list = range || field ? rects() : [];
 
-      /* 选区滚出视口后矩形依然存在（只是坐标在屏幕外），
-         若照常绘制，框会画到视口外、菜单还会被 placeMenu 的
-         钳制行为强行按在窗口里 —— 表现为「内容滚走了，复制/全选
-         还挂在原地」。所以先按视口过滤：全部出屏就整体隐藏，
-         但不清 selection 状态，滚回来 schedule() 会重新画出来。 */
-      const M = 48; /* 容差：半露的行、菜单 GAP 都算可见 */
-      const vis = list.filter((r) =>
-        r.top < innerHeight + M && r.top + r.height > -M &&
-        r.left < innerWidth + M && r.left + r.width > -M);
-
       if (!list.length) {
         open = false;
         layer.hidden = true;
@@ -1951,20 +2026,26 @@
         gripA.hidden = gripB.hidden = true;
         return;
       }
-      if (!vis.length) {
+
+      /* 先标连接关系（用原始几何），再裁剪出真正能看见的部分。
+         裁完一块不剩 = 选区整体滚出了可视区（或所在窗口被收起）：
+         隐藏图层但不清 selection 状态，滚回来 schedule() 会重新画。 */
+      const draw = clipToBoxes(markJoins(list));
+      if (!draw.length) {
         layer.hidden = true;
         menu.hidden = true;
         gripA.hidden = gripB.hidden = true;
         return;
       }
+
       /* 两端都画自绘选区框：原生 ::selection 的形状由浏览器决定，
          圆角加不上，所以高亮统一归我们管（触摸设备额外多两个拖拽手柄：
          鼠标用户的指针本身就是手柄，再画两个点反而挡视线）。 */
       layer.hidden = false;
       layer.classList.toggle('is-editor', !!field);
-      paint(list);
-      placeGrips(list);
-      if (open) placeMenu(list);
+      paint(draw);
+      placeGrips(draw);
+      if (open) placeMenu(draw);
     }
 
     /* 读一次当前选区状态。activeElement 是 textarea 时，
@@ -2147,8 +2228,8 @@
       hideMenu();
     });
 
-    /* 图层可见（触摸端选区框）或菜单开着，滚动/缩放都得重算 ——
-       桌面端图层恒隐藏（高亮走原生 ::selection），只能靠 open 兜住菜单。 */
+    /* 图层可见（选区框在画）或菜单开着，滚动/缩放都得重算 ——
+       菜单收起后 open=false 但框还挂着，只判 open 会漏掉这种情况。 */
     window.addEventListener('scroll', () => { if (!layer.hidden || open) schedule(); }, true);
     window.addEventListener('resize', () => { if (!layer.hidden || open) schedule(); });
 
