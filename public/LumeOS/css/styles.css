@@ -466,6 +466,14 @@ textarea {
   transition: opacity 0.16s ease;
 }
 
+/* 指针进了 iframe：里面是独立文档，cursor: none 传不进去，它自己会画
+   系统光标；自绘光标再浮在上面就是两个指针。这一层直接整体藏掉，
+   出 iframe 立刻恢复（见 os.js 的 away()）。 */
+#cursor.is-away,
+#cursor-ring.is-away {
+  opacity: 0 !important;
+}
+
 /* 拖拽中：圆点略收一点，给"抓住了"的反馈 */
 #cursor.is-dragging {
   width: 8px;

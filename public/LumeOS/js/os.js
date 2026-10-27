@@ -159,6 +159,10 @@
       dot.style.top = my + 'px';
       dot.classList.remove('is-hidden');
       ring.classList.remove('is-hidden');
+      /* 真事件回来了 —— 说明指针已经不在 iframe 里（在 iframe 上父页面
+         收不到 pointermove），顺手把"让位"状态撤掉 */
+      dot.classList.remove('is-away');
+      ring.classList.remove('is-away');
     }
     /* 挂到 window 上供窗口拖拽 / 缩放调用（见下方 dragWin / resizeWin） */
     window.__lumeCursorSync = syncCursor;
@@ -271,6 +275,32 @@
       dot.classList.add('is-hidden');
       ring.classList.add('is-hidden');
     });
+
+    /* ---------- 指针进入 iframe：让位给它自己画的光标 ----------
+       iframe 是另一份文档，全站的 cursor: none 传不进去，它内部会照常
+       画系统光标；而我们的光标是父页面上 z-index 最高的固定层，指针进了
+       iframe 之后父页面收不到 mousemove，它会僵在边界上 —— 于是两个光标
+       同时在场。所以一进 iframe（pointerover 的目标是 iframe 元素）就把
+       自绘光标藏起来，出来或收到任何真实指针事件时恢复。 */
+    function away(on) {
+      dot.classList.toggle('is-away', on);
+      ring.classList.toggle('is-away', on);
+    }
+    const isFrame = (n) => !!n && n.tagName === 'IFRAME';
+    document.addEventListener(
+      'pointerover',
+      (e) => {
+        if (isFrame(e.target)) away(true);
+      },
+      true
+    );
+    document.addEventListener(
+      'pointerout',
+      (e) => {
+        if (isFrame(e.target)) away(false);
+      },
+      true
+    );
 
     /* 白点直接钉在鼠标坐标上，不做插值 —— 指针本体必须零延迟。
        外环跟手带一点滞后（弹簧），移动越快沿运动方向拉得越长。 */
@@ -565,13 +595,22 @@
   /*  拖拽 / 缩放才能主动喂坐标。模块加载顺序无关，用可选调用。  */
   /* -------------------------------------------------------- */
 
+  /* 拖到窗口区顶部多少像素以内算"贴顶" —— 触发最大化 */
+  const SNAP_TOP = 6;
+
   function dragWin(win, event) {
-    if (win.max || event.button !== 0) return;
+    if (event.button !== 0) return;
     const node = win.el;
-    const rect = node.getBoundingClientRect();
     const area = el.windows.getBoundingClientRect();
-    const offX = event.clientX - rect.left;
-    const offY = event.clientY - rect.top;
+    let rect = node.getBoundingClientRect();
+    let offX = event.clientX - rect.left;
+    let offY = event.clientY - rect.top;
+    /* 最大化窗口被拖下来时，按原来的横向比例落点，手感才像"抓住标题栏" */
+    const fracX = rect.width > 0 ? offX / rect.width : 0.5;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let fromMax = win.max;
+    let snapped = false;
 
     node.classList.add('dragging');
     /* 捕获指针：鼠标快速甩出窗口也不会丢事件，
@@ -588,6 +627,29 @@
       /* 光标先跟着走，再算窗口位置：万一后面的钳制逻辑抛错，
          至少指针不会脱手 */
       if (window.__lumeCursorSync) window.__lumeCursorSync(ev);
+
+      /* ① 从最大化状态往下拖：先还原成原来的尺寸，再接着拖。
+         留 5px 死区，手抖一下不会把最大化的窗口弹回来。 */
+      if (fromMax) {
+        if (Math.abs(ev.clientX - startX) < 5 && Math.abs(ev.clientY - startY) < 5) return;
+        fromMax = false;
+        toggleMax(win);
+        rect = node.getBoundingClientRect();
+        offX = Math.round(rect.width * fracX);
+        offY = Math.min(offY, 18); /* 别让指针跑到标题栏外面去 */
+      }
+
+      /* ② 指针顶到屏幕最上沿：最大化，这次拖拽到此为止。
+         用屏幕顶而不是窗口区顶，手感跟系统桌面的"甩到顶栏"一致，
+         也不会在窗口只是靠近顶部时误触发。 */
+      if (!snapped && ev.clientY <= SNAP_TOP) {
+        snapped = true;
+        if (!win.max) toggleMax(win);
+        if (window.LumeSel) window.LumeSel.refresh();
+        return;
+      }
+      if (snapped) return;
+
       let x = ev.clientX - area.left - offX;
       let y = ev.clientY - area.top - offY;
       x = Math.min(Math.max(x, -rect.width + 140), area.width - 140);
