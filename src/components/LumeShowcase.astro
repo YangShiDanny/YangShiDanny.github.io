@@ -1,0 +1,359 @@
+---
+/*
+  LumeShowcase — landing-page section with three parts:
+   1) Online Playground (Lume editor -> generated C + run output, via window.LumeVM)
+   2) Syntax cheat-sheet aligned with the lume-vm lexer
+   3) "Lume -> C -> clang" pipeline diagram
+  Included on both / and /zh/.
+*/
+const locale = Astro.currentLocale;
+const isZh = locale === 'zh';
+const t = (o) => (isZh ? o.zh : o.en);
+
+const defaultCode = `fn sq(x: int) -> int {
+    return x * x
+}
+
+fn main() {
+    name := "lume"
+    say("hello, {name} — 3^2 = {sq(3)}")
+
+    total: int = 0
+    for i in 0..10 {
+        if i % 2 == 0 {
+            total += sq(i)
+        }
+    }
+    say("sum of squares of evens under 10 = {total}")
+
+    xs := [3, 1, 4, 1, 5, 9, 2, 6]
+    best := xs[0]
+    for i in 1..xs.len() {
+        if xs[i] > best { best = xs[i] }
+    }
+    say("{xs.len()} numbers, max = {best}")
+}`;
+
+// Keywords — exactly the lexer KEYWORDS set, with a support flag.
+// sup: true  = works in the browser VM; false = cargo-only (not in the in-browser subset)
+const keywords = [
+  { t: 'fn', d: { en: 'define a function', zh: '定义函数' }, sup: true },
+  { t: 'if / else', d: { en: 'conditional branch', zh: '条件分支' }, sup: true },
+  { t: 'while', d: { en: 'loop while a condition holds', zh: '当型循环' }, sup: true },
+  { t: 'for … in …', d: { en: 'range loop (0..n is half-open)', zh: '范围循环（0..n 左闭右开）' }, sup: true },
+  { t: 'in', d: { en: 'range operator for for-loops', zh: 'for 循环的范围关键字' }, sup: true },
+  { t: 'return', d: { en: 'return a value', zh: '返回值' }, sup: true },
+  { t: 'break / continue', d: { en: 'loop control', zh: '循环控制' }, sup: true },
+  { t: 'let x := v', d: { en: 'declare with type inference', zh: '声明并推断类型' }, sup: true },
+  { t: 'x: T = v', d: { en: 'declare with explicit type', zh: '带显式类型声明' }, sup: true },
+  { t: 'struct / trait / impl', d: { en: 'composite types & interfaces', zh: '复合类型与接口' }, sup: false },
+  { t: 'match', d: { en: 'pattern matching', zh: '模式匹配' }, sup: false },
+  { t: 'enum', d: { en: 'sum type', zh: '枚举类型' }, sup: false },
+  { t: 'scope / import / use', d: { en: 'namespacing & modules', zh: '命名空间与模块' }, sup: false },
+  { t: 'pub / const / extern', d: { en: 'visibility & linkage', zh: '可见性与链接' }, sup: false },
+  { t: 'and / or / not', d: { en: 'boolean operators', zh: '布尔运算符' }, sup: false },
+  { t: 'par / async / await / spawn', d: { en: 'concurrency', zh: '并发' }, sup: false },
+  { t: 'app', d: { en: 'declare a GUI app', zh: '声明图形应用' }, sup: false },
+];
+
+// Types — the lexer TYPES set. All integer widths map to C long long.
+const types = [
+  { t: 'int', d: { en: 'integer (maps to long long)', zh: '整数（编译为 long long）' }, sup: true },
+  { t: 'i8 i16 i32 i64 i128', d: { en: 'signed integer widths', zh: '有符号整数位宽' }, sup: true },
+  { t: 'u1 u2 u4 u8 u16 u32 u64 u128', d: { en: 'unsigned integer widths', zh: '无符号整数位宽' }, sup: true },
+  { t: 'float / f32 / f64', d: { en: 'floating point', zh: '浮点数' }, sup: true },
+  { t: 'bool', d: { en: 'true / false', zh: '真 / 假' }, sup: true },
+  { t: 'str', d: { en: 'UTF-8 string', zh: 'UTF-8 字符串' }, sup: true },
+  { t: 'rune', d: { en: 'a single Unicode code point', zh: '单个 Unicode 码点' }, sup: true },
+];
+
+// Builtins (callable in the browser VM)
+const builtins = [
+  { t: 'say(…) / write(…)', d: { en: 'print (say adds a newline)', zh: '打印（say 带换行）' }, sup: true },
+  { t: 'sqrt / abs', d: { en: 'math helpers', zh: '数学函数' }, sup: true },
+  { t: 'len / str_len', d: { en: 'length of array / string', zh: '数组 / 字符串长度' }, sup: true },
+  { t: 'int_to_str(…)', d: { en: 'format an int as text', zh: '把整数格式化为文本' }, sup: true },
+  { t: 'a[i] / a.len()', d: { en: 'array index & length', zh: '数组下标与长度' }, sup: true },
+  { t: '"…{expr}…"', d: { en: 'string interpolation', zh: '字符串插值' }, sup: true },
+];
+
+const ops = [
+  { t: ':=', d: { en: 'declare + assign', zh: '声明并赋值' } },
+  { t: '=', d: { en: 'assign', zh: '赋值' } },
+  { t: '+-*/%', d: { en: 'arithmetic', zh: '算术' } },
+  { t: '== != < > <= >=', d: { en: 'comparison', zh: '比较' } },
+  { t: '&& || !', d: { en: 'logical', zh: '逻辑' } },
+  { t: '..  ..=', d: { en: 'range (open / closed)', zh: '范围（开 / 闭）' } },
+  { t: '->  =>', d: { en: 'return type / lambda', zh: '返回类型 / 闭包' } },
+  { t: '[] () {}', d: { en: 'index / call / block', zh: '下标 / 调用 / 代码块' } },
+  { t: '.  ,  :', d: { en: 'member / sep / type', zh: '成员 / 分隔 / 类型' } },
+];
+---
+
+<section class="lume-show">
+  <div class="container">
+    <!-- ============ PLAYGROUND ============ -->
+    <p class="eyebrow">{t({ en: 'Lume', zh: 'Lume' })}</p>
+    <h2 class="lume-h2">{t({ en: 'Try Lume in your browser', zh: '在浏览器里试用 Lume' })}</h2>
+    <p class="muted" style="max-width: 46rem;">
+      {t({
+        en: 'A tiny language of mine that compiles to C. This playground runs entirely in your tab — the left side is Lume source, the right side shows the C we generate and the output of running it. No server, no clang in the browser (it uses an in-page AST evaluator); the real toolchain compiles with clang.',
+        zh: '这是我写的一门小语言，编译到 C。这个沙盒完全在你的标签页里运行——左边是 Lume 源码，右边显示我们生成的 C 代码以及运行结果。浏览器里没有 clang（用的是内置的 AST 求值器）；真正的工具链用 clang 编译。',
+      })}
+    </p>
+
+    <div class="pg">
+      <div class="pg-pane">
+        <div class="pg-bar">
+          <span class="pg-tag">Lume</span>
+          <span class="pg-spacer"></span>
+          <button id="pg-run" class="pg-btn pg-run">{t({ en: 'Run ▶', zh: '运行 ▶' })}</button>
+          <button id="pg-reset" class="pg-btn pg-ghost">{t({ en: 'Reset', zh: '重置' })}</button>
+        </div>
+        <div class="pg-code">
+          <pre id="pg-hl" class="pg-hl" aria-hidden="true"><code></code></pre>
+          <textarea id="pg-code" class="pg-ta" spellcheck="false" autocapitalize="off"
+            autocomplete="off">{defaultCode}</textarea>
+        </div>
+      </div>
+
+      <div class="pg-pane">
+        <div class="pg-bar">
+          <div class="pg-tabs">
+            <button id="pg-tab-c" class="pg-tab active">C</button>
+            <button id="pg-tab-run" class="pg-tab">{t({ en: 'Run output', zh: '运行结果' })}</button>
+          </div>
+          <span class="pg-spacer"></span>
+          <span id="pg-status" class="pg-status"></span>
+        </div>
+        <pre id="pg-c" class="pg-out"><code></code></pre>
+        <pre id="pg-run-out" class="pg-out" hidden><code></code></pre>
+      </div>
+    </div>
+
+    <!-- ============ SYNTAX CHEAT SHEET ============ -->
+    <h3 class="lume-h3">{t({ en: 'Syntax cheat sheet', zh: '语法速查' })}</h3>
+    <p class="muted" style="max-width: 46rem;">
+      {t({
+        en: 'These tables line up exactly with the lexer in lume-vm.js. The ✓ column marks what the in-browser VM actually supports; everything else needs the cargo toolchain.',
+        zh: '这些表和 lume-vm.js 里的词法分析器一一对应。✓ 列标注浏览器 VM 实际支持的内容；其余需要 cargo 工具链。',
+      })}
+    </p>
+
+    <div class="ref-grid">
+      <div class="ref-card">
+        <h4>{t({ en: 'Keywords', zh: '关键字' })}</h4>
+        <table class="ref">
+          <thead><tr><th>{t({ en: 'Token', zh: '符号' })}</th><th>{t({ en: 'Meaning', zh: '含义' })}</th><th>VM</th></tr></thead>
+          <tbody>
+            {keywords.map((r) => (
+              <tr>
+                <td class="tok">{r.t}</td>
+                <td>{t(r.d)}</td>
+                <td class="sup">{r.sup ? '✓' : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="ref-card">
+        <h4>{t({ en: 'Types', zh: '类型' })}</h4>
+        <table class="ref">
+          <thead><tr><th>{t({ en: 'Type', zh: '类型' })}</th><th>{t({ en: 'Meaning', zh: '含义' })}</th><th>VM</th></tr></thead>
+          <tbody>
+            {types.map((r) => (
+              <tr>
+                <td class="tok">{r.t}</td>
+                <td>{t(r.d)}</td>
+                <td class="sup">{r.sup ? '✓' : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <h4 style="margin-top:24px;">{t({ en: 'Builtins', zh: '内建函数' })}</h4>
+        <table class="ref">
+          <thead><tr><th>{t({ en: 'Call', zh: '调用' })}</th><th>{t({ en: 'Meaning', zh: '含义' })}</th><th>VM</th></tr></thead>
+          <tbody>
+            {builtins.map((r) => (
+              <tr>
+                <td class="tok">{r.t}</td>
+                <td>{t(r.d)}</td>
+                <td class="sup">{r.sup ? '✓' : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="ref-card">
+        <h4>{t({ en: 'Operators', zh: '运算符' })}</h4>
+        <table class="ref">
+          <thead><tr><th>{t({ en: 'Op', zh: '运算符' })}</th><th>{t({ en: 'Meaning', zh: '含义' })}</th></tr></thead>
+          <tbody>
+            {ops.map((r) => (
+              <tr>
+                <td class="tok">{r.t}</td>
+                <td>{t(r.d)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p class="legend">
+          <span class="badge ok">✓</span> {t({ en: 'runs in the browser VM', zh: '可在浏览器 VM 中运行' })}
+          <span class="badge no">—</span> {t({ en: 'cargo toolchain only', zh: '仅限 cargo 工具链' })}
+        </p>
+      </div>
+    </div>
+
+    <!-- ============ FLOW DIAGRAM ============ -->
+    <h3 class="lume-h3">{t({ en: 'From Lume to C to clang', zh: '从 Lume 到 C 到 clang' })}</h3>
+    <p class="muted" style="max-width: 46rem;">
+      {t({
+        en: 'The real compiler (written in Rust, built with cargo) walks the same four phases and then feeds the C to clang. The playground above uses the in-browser AST evaluator instead, because a tab has no clang.',
+        zh: '真正的编译器（用 Rust 写、以 cargo 构建）走同样的四个阶段，再把生成的 C 交给 clang。上面的沙盒改用浏览器内的 AST 求值器，因为标签页里没有 clang。',
+      })}
+    </p>
+
+    <div class="flow">
+      <div class="flow-row">
+        <div class="flow-step">
+          <div class="flow-ico">📝</div>
+          <div class="flow-name">{t({ en: 'Lume source', zh: 'Lume 源码' })}</div>
+          <div class="flow-sub">.lume</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step wide">
+          <div class="flow-ico">⚙️</div>
+          <div class="flow-name">LumeVM</div>
+          <div class="flow-sub">{t({ en: 'lex → parse → type-infer → codegen', zh: '词法 → 语法 → 类型推断 → 代码生成' })}</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-ico">🇨</div>
+          <div class="flow-name">{t({ en: 'C source', zh: 'C 源码' })}</div>
+          <div class="flow-sub">.c</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step clang">
+          <div class="flow-ico">🔨</div>
+          <div class="flow-name">clang -O2</div>
+          <div class="flow-sub">{t({ en: 'cargo toolchain', zh: 'cargo 工具链' })}</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-ico">🟢</div>
+          <div class="flow-name">{t({ en: 'executable', zh: '可执行文件' })}</div>
+          <div class="flow-sub">a.out</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-ico">🖨️</div>
+          <div class="flow-name">{t({ en: 'stdout', zh: '标准输出' })}</div>
+          <div class="flow-sub">say(…)</div>
+        </div>
+      </div>
+      <div class="flow-diff">
+        <div class="flow-step small">
+          <div class="flow-name">{t({ en: 'expected output', zh: '期望输出' })}</div>
+        </div>
+        <div class="flow-arrow">⇄ diff</div>
+        <div class="flow-step small">
+          <div class="flow-name">{t({ en: 'actual output', zh: '实际输出' })}</div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      {t({
+        en: 'In this static site the playground can’t shell out to clang, so it evaluates the AST directly. The generated C you see is byte-for-byte what the Rust compiler would emit before clang takes over.',
+        zh: '在这个静态站点里，沙盒无法调用 clang，所以它直接求值 AST。你看到的生成的 C，与 Rust 编译器在交给 clang 之前吐出的完全一致。',
+      })}
+    </p>
+  </div>
+</section>
+
+<!-- load the in-browser compiler, then wire up the playground -->
+<script is:inline src="/LumeOS/js/lume-vm.js"></script>
+<script is:inline src="/js/lume-playground.js"></script>
+
+<style>
+  .lume-show { padding: 80px 0; border-top: 1px solid var(--border); }
+  .lume-h2 { font-family: var(--font-display); font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 8px 0 16px; letter-spacing: -0.02em; }
+  .lume-h3 { font-family: var(--font-display); font-size: clamp(1.4rem, 3vw, 1.9rem); margin: 64px 0 12px; letter-spacing: -0.01em; }
+
+  /* ---------- Playground ---------- */
+  .pg { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 28px; }
+  .pg-pane { border: 1px solid var(--border-strong); border-radius: 14px; overflow: hidden; background: var(--panel); display: flex; flex-direction: column; min-height: 360px; }
+  .pg-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+  .pg-tag { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); }
+  .pg-spacer { flex: 1; }
+  .pg-tabs { display: flex; gap: 4px; }
+  .pg-tab { font-family: var(--font-mono); font-size: 12px; padding: 5px 12px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer; }
+  .pg-tab.active { color: var(--text); border-color: var(--border-strong); background: var(--panel); }
+  .pg-btn { font-family: var(--font-mono); font-size: 12px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border-strong); cursor: pointer; }
+  .pg-run { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+  .pg-ghost { background: transparent; color: var(--muted); }
+  .pg-status { font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+  .pg-code { position: relative; flex: 1; min-height: 300px; }
+  .pg-hl, .pg-ta {
+    margin: 0; border: 0; width: 100%; height: 100%;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.6;
+    padding: 16px; white-space: pre; tab-size: 2; overflow: auto;
+    position: absolute; inset: 0; box-sizing: border-box;
+  }
+  .pg-hl { pointer-events: none; color: var(--text); z-index: 1; }
+  .pg-ta { background: transparent; color: transparent; caret-color: var(--accent, #6ea8fe); resize: none; z-index: 2; outline: none; }
+  .pg-out { margin: 0; flex: 1; overflow: auto; padding: 16px; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--text); background: var(--panel); }
+  .pg-out .ln { display: block; white-space: pre; }
+
+  /* token colors */
+  .pg-hl .kw { color: #ff7b9c; }
+  .pg-hl .ty { color: #6ec3ff; }
+  .pg-hl .fn { color: #ffd479; }
+  .pg-hl .num { color: #c792ea; }
+  .pg-hl .str, .pg-hl .cmt { color: var(--muted); font-style: italic; }
+  .pg-hl .op { color: var(--faint); }
+  .pg-out .kw { color: #ff7b9c; }
+  .pg-out .ty { color: #6ec3ff; }
+  .pg-out .num { color: #c792ea; }
+  .pg-out .str, .pg-out .cmt { color: var(--muted); }
+  .pg-out .pre { color: #ffd479; }
+  .pg-out .err { color: #ff6b6b; }
+  .pg-out .dim { color: var(--faint); }
+
+  /* ---------- Reference tables ---------- */
+  .ref-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; }
+  .ref-card { border: 1px solid var(--border); border-radius: 14px; padding: 18px; background: var(--panel); }
+  .ref-card h4 { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin: 0 0 12px; }
+  table.ref { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.ref th { text-align: left; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--faint); padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  table.ref td { padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; }
+  table.ref td.tok { font-family: var(--font-mono); color: #6ec3ff; white-space: nowrap; }
+  table.ref td.sup { text-align: center; font-family: var(--font-mono); }
+  .legend { margin-top: 16px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .badge { font-family: var(--font-mono); font-weight: 700; border-radius: 6px; padding: 1px 7px; }
+  .badge.ok { color: #4ade80; background: rgba(74,222,128,0.12); }
+  .badge.no { color: var(--faint); background: rgba(255,255,255,0.05); }
+
+  /* ---------- Flow diagram ---------- */
+  .flow { margin-top: 24px; display: flex; flex-direction: column; gap: 18px; }
+  .flow-row { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+  .flow-step { flex: 1 1 110px; min-width: 100px; border: 1px solid var(--border-strong); border-radius: 12px; padding: 16px 12px; text-align: center; background: var(--panel); }
+  .flow-step.wide { flex: 2 1 200px; }
+  .flow-step.clang { border-color: #6ec3ff; background: rgba(110,195,255,0.07); }
+  .flow-step.small { flex: 1 1 160px; padding: 12px; }
+  .flow-ico { font-size: 22px; line-height: 1; }
+  .flow-name { font-family: var(--font-mono); font-size: 13px; font-weight: 600; margin-top: 8px; color: var(--text); }
+  .flow-sub { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .flow-arrow { align-self: center; font-size: 18px; color: var(--faint); flex: 0 0 auto; }
+  .flow-diff { display: flex; align-items: center; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .flow-diff .flow-arrow { color: var(--muted); }
+  .note { margin-top: 28px; font-size: 13px; color: var(--muted); max-width: 52rem; line-height: 1.7; }
+
+  @media (max-width: 820px) {
+    .pg { grid-template-columns: 1fr; }
+    .ref-grid { grid-template-columns: 1fr; }
+  }
+</style>

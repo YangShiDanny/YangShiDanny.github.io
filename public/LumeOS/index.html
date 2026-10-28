@@ -102,6 +102,13 @@
           <span class="mb-dot" title="Network"></span>
           <span class="mb-dot" title="Battery"></span>
         </div>
+        <button class="mb-btn" id="cc" type="button" aria-label="Control Center" title="Control Center">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="2.2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2.2" fill="currentColor" stroke="none"/><circle cx="8" cy="17" r="2.2" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button class="mb-btn" id="bell" type="button" aria-label="Notifications" title="Notifications">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>
+          <span class="bell-badge" aria-hidden="true">0</span>
+        </button>
         <time class="mb-clock" id="mb-clock">--:--</time>
       </div>
     </header>
@@ -157,6 +164,39 @@
 
     <!-- 通知 -->
     <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <!-- 通知面板 -->
+    <div class="panel" id="notif-panel" hidden></div>
+
+    <!-- 控制中心 -->
+    <div class="panel cc-panel" id="cc-panel" hidden>
+      <div class="cc-row"><span class="cc-label">Brightness</span><input type="range" min="30" max="100" value="100" data-cc="bright" /></div>
+      <div class="cc-row"><span class="cc-label">Volume</span><input type="range" min="0" max="100" value="60" data-cc="vol" /></div>
+      <div class="cc-row cc-toggles">
+        <button class="cc-toggle" data-cc="theme" type="button">Theme</button>
+        <button class="cc-toggle on" data-cc="wifi" type="button">Wi-Fi</button>
+        <button class="cc-toggle" data-cc="bt" type="button">Bluetooth</button>
+      </div>
+    </div>
+
+    <!-- 屏保 -->
+    <div class="screensaver" id="screensaver" hidden>
+      <canvas></canvas>
+      <div class="sv-clock">--:--</div>
+    </div>
+
+    <!-- 首次启动导览 -->
+    <div class="tour" id="tour" hidden>
+      <div class="tour-box">
+        <div class="tour-title"></div>
+        <div class="tour-text"></div>
+        <div class="tour-dots"><i class="on"></i><i></i><i></i><i></i></div>
+        <div class="tour-actions">
+          <button data-tour="skip" type="button">Skip</button>
+          <button data-tour="next" type="button">Next</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- 锁屏 / 关机 -->
@@ -177,6 +217,7 @@
   <script src="js/lume-vm.js"></script>
   <script src="js/lib/bunzip.js"></script>
   <script src="js/lume-py.js"></script>
+  <script src="js/lume-git.js"></script>
   <script src="js/editor-plus.js"></script>
   <script src="js/apps.js"></script>
   <script src="js/os.js"></script>

@@ -62,6 +62,7 @@ official Pyodide minimal distribution and parks it in IndexedDB.
 py setup     # downloads pyodide-core (~6.4 MB), once per browser
 py status    # what's installed, how much space it uses
 py remove    # delete it
+py run work/hello.py
 ```
 
 Two reasons for IndexedDB instead of `localStorage`: `localStorage` caps out around
@@ -69,8 +70,28 @@ Two reasons for IndexedDB instead of `localStorage`: `localStorage` caps out aro
 ~37% on base64; IndexedDB stores `Blob`/`ArrayBuffer` natively against the much
 larger disk quota.
 
-`py run` is not wired up yet — the downloader and storage layer are done, the
-execution bridge is a later pass.
+### Why Python runs in a Web Worker
+
+Pyodide's CPython executes synchronously. On the main thread, `while True: pass`
+freezes the whole desktop — not even `keydown` fires, so there is no way to offer
+an interrupt. `js/lume-py-worker.js` therefore owns the interpreter, and **Ctrl+C
+kills the worker** (`worker.terminate()`), which stops even a dead loop. The cost is
+that a killed run loses its globals; the terminal says so. On touch screens, where
+the on-screen keyboard has no Ctrl, typing `stop` does the same thing.
+
+### Local development shortcut
+
+`localhost` skips the download entirely if a local copy exists:
+
+```sh
+node scripts/pyodide-vendor.cjs ~/Downloads/pyodide-core-0.26.4.tar.bz2
+```
+
+That unpacks the archive into `vendor/pyodide/` (git-ignored, ~13 MB). The dev
+server maps it at `/LumeOS/vendor/pyodide/` — see the `lumeos-public-index` plugin
+in `astro.config.mjs` — and `js/lume-py.js` probes it before falling back to
+IndexedDB and finally the CDN. The directory lives outside `public/` on purpose: a
+production build must not ship 13 MB of WASM it will never serve.
 
 ## Credits
 

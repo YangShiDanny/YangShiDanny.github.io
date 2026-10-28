@@ -11,7 +11,8 @@
     "dev": "/usr/bin/node scripts/build-version.cjs && /usr/bin/node node_modules/astro/bin/astro.mjs dev",
     "build": "/usr/bin/node scripts/build-version.cjs && /usr/bin/node node_modules/astro/bin/astro.mjs build",
     "preview": "/usr/bin/node node_modules/astro/bin/astro.mjs preview",
-    "astro": "/usr/bin/node node_modules/astro/bin/astro.mjs"
+    "astro": "/usr/bin/node node_modules/astro/bin/astro.mjs",
+    "py:vendor": "/usr/bin/node scripts/pyodide-vendor.cjs"
   },
   "dependencies": {
     "@astrojs/react": "^7.1.0",

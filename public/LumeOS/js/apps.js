@@ -91,6 +91,16 @@ const TerminalApp = {
     /* py setup 正在下载时置位，防止用户连按回车开好几个 6.4MB 的请求 */
     const state = { pyBusy: false };
 
+    /* 终端动画（cmatrix / sl）同一时刻只允许一个，下一条命令进来就停掉。 */
+    let live = null;
+    const stopLive = () => {
+      if (live) {
+        try { live.stop(); } catch (e) { /* noop */ }
+        if (live.el && live.el.parentNode) live.el.parentNode.removeChild(live.el);
+        live = null;
+      }
+    };
+
     const promptPath = () => {
       if (cwd === LumeFS.HOME) return '~';
       if (cwd.startsWith(LumeFS.HOME + '/')) return '~' + cwd.slice(LumeFS.HOME.length);
@@ -115,6 +125,25 @@ const TerminalApp = {
 
     const printDim = (text) => print(`<span class="dim">${esc(text)}</span>`);
 
+    /* 打断正在跑的 python。前面说过 Python 跑在 worker 里，所以这里
+       唯一的真手段就是杀掉 worker —— 死循环也停得掉，代价是那次的
+       全局变量全丢（终端里会明说）。见 lume-py.js。 */
+    const stopPython = () => {
+      if (!state.pyBusy) {
+        printDim('python: nothing is running');
+        return false;
+      }
+      print('<span class="dim">^C</span>');
+      const stopped = window.LumePy ? window.LumePy.interrupt() : false;
+      printDim(
+        stopped
+          ? 'KeyboardInterrupt · runtime killed, it restarts on the next run'
+          : 'python: nothing to interrupt'
+      );
+      state.pyBusy = false;
+      return stopped;
+    };
+
     const greet = () => {
       printDim('LumeOS 1.0.0-nebula  ·  tty1  ·  ' + new Date().toLocaleString());
       print('');
@@ -129,10 +158,20 @@ const TerminalApp = {
           ['ls [path]', 'list a directory'],
           ['cd <path>', 'change directory'],
           ['cat <file>', 'print a file'],
+          ['write <file> [text]', 'create or overwrite a file'],
+          ['edit <file>', 'open a file in the editor'],
           ['pwd', 'print working directory'],
           ['open <app|url>', 'launch an app, or open a URL in the built-in browser'],
           ['lume <run|build> <file>', 'compile a .lume file in the browser'],
           ['py <setup|run|status>', 'install the Python runtime locally'],
+          ['git <init|status|commit>', 'a real git, running inside this tab'],
+          ['curl <url>', 'GET a URL (CORS-limited)'],
+          ['wget <url> [-O file]', 'download a URL into LumeFS'],
+          ['cmatrix', 'the matrix has you'],
+          ['sl', 'a little train zooms by'],
+          ['fortune', 'random words of wisdom'],
+          ['cowsay <text>', 'an opinionated cow'],
+          ['stop', 'kill a running python program (or Ctrl+C)'],
           ['neofetch', 'system information'],
           ['theme <dark|light>', 'switch appearance'],
           ['wall <stars|grid|plain>', 'change wallpaper'],
@@ -198,6 +237,60 @@ const TerminalApp = {
           return;
         }
         print(esc(content));
+      },
+
+      /* 终端里没有编辑器，所以给一条能「直接造一个文件」的路。
+         没有它，py 的提示（写到 work/hello.py）就落不了地：
+         用户手上根本没有造 .py 文件的手段。 */
+      write(args) {
+        if (!args[0]) {
+          printDim('usage: write <file> [text…]   e.g. write work/hello.py "print(1+1)"');
+          return;
+        }
+        const target = LumeFS.resolve(cwd, args[0]);
+        const body = args.slice(1).join(' ');
+
+        /* 父目录不在就一级级建出来 —— 和 `mkdir -p` 一样，
+           否则 write work/sub/a.py 会因为 work/sub 不存在而静默失败 */
+        const segs = target.split('/').filter(Boolean);
+        let walk = '';
+        for (let i = 0; i < segs.length - 1; i++) {
+          walk += '/' + segs[i];
+          if (!LumeFS.isDir(walk) && !LumeFS.mkdir(walk)) {
+            print(`<span class="err">write: cannot create ${esc(walk)}</span>`);
+            return;
+          }
+        }
+
+        if (LumeFS.isDir(target)) {
+          print(`<span class="err">write: ${esc(target)} is a directory</span>`);
+          return;
+        }
+        if (!LumeFS.write(target, body)) {
+          print(`<span class="err">write: ${esc(target)}: cannot write</span>`);
+          return;
+        }
+        printDim(`wrote ${target}  ·  ${body.length} chars`);
+      },
+
+      /* 打开编辑器改文件；文件不存在就先建一个空的 */
+      edit(args) {
+        if (!args[0]) {
+          printDim('usage: edit <file>');
+          return;
+        }
+        const target = LumeFS.resolve(cwd, args[0]);
+        if (!LumeFS.exists(target)) {
+          const segs = target.split('/').filter(Boolean);
+          let walk = '';
+          for (let i = 0; i < segs.length - 1; i++) {
+            walk += '/' + segs[i];
+            if (!LumeFS.isDir(walk)) LumeFS.mkdir(walk);
+          }
+          LumeFS.write(target, '');
+        }
+        window.LumeOS.openApp('editor', { path: target });
+        printDim(`editing ${target}`);
       },
 
       lume(args) {
@@ -329,7 +422,25 @@ const TerminalApp = {
           print(`  <span class="u">${esc(padW('py remove', 22))}</span><span class="dim">删掉本地运行时</span>`);
           print('');
           printDim(`包大小约 ${human(PY.bytes)}，只需装一次，之后离线可用。`);
+          /* localhost 上如果放了 vendor 目录，连这一步都能省 */
+          if (window.LumePy && window.LumePy.local) {
+            printDim('localhost：优先吃 vendor/pyodide 里的文件，不用 setup。');
+          }
+          printDim('跑的时候按 Ctrl+C 打断（触屏上敲 stop）。');
           print('');
+        };
+
+        /* localhost + vendor 目录：py run 根本不用 IndexedDB 里的包。
+           说清楚，免得用户以为非得先 setup 一遍。 */
+        const noteLocal = () => {
+          if (!window.LumePy || !window.LumePy.local) return;
+          window.LumePy.probeVendor().then((v) => {
+            if (!v) return;
+            print(
+              `<span class="dim">dev      </span>localhost → vendor/pyodide ` +
+              `<span class="dim">(${esc(String(v.version || '?'))}, no download)</span>`
+            );
+          });
         };
 
         if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
@@ -346,6 +457,7 @@ const TerminalApp = {
             if (!rec) {
               printDim('python runtime  not installed');
               printDim(`run <span class="u">py setup</span> to fetch it (${human(PY.bytes)})`);
+              noteLocal();
               return;
             }
             const m = rec.meta || {};
@@ -355,6 +467,7 @@ const TerminalApp = {
             print(`<span class="dim">source   </span>${esc(m.url || PY.direct)}`);
             print(`<span class="dim">stored   </span>${esc(d)}`);
             if (m.mirrored) printDim('(fetched through ' + (m.via || 'a proxy') + ')');
+            noteLocal();
             print('');
             window.LumeStore.estimate().then((est) => {
               if (est && est.usage != null) {
@@ -482,7 +595,14 @@ const TerminalApp = {
                   print(`<span class="u">installed</span>  Pyodide ${esc(PY.version)}  ·  ${human(r.blob.size)}`);
                   printDim('stored in this browser — offline from now on');
                   print('');
-                  printDim(`试一下：写到 work/hello.py，然后 <span class="u">py run work/hello.py</span>`);
+                  /* 这行走 print 不是 printDim：里面有 .u 标记。
+                     printDim 会把它整段 esc 掉，屏幕上就露出 <span> 字样。 */
+                  print(
+                    `<span class="dim">try it —</span> ` +
+                      `<span class="u">write work/hello.py "print('hello from python')"</span>` +
+                      `<span class="dim"> then </span>` +
+                      `<span class="u">py run work/hello.py</span>`
+                  );
                   state.pyBusy = false;
                 });
               })
@@ -561,6 +681,7 @@ const TerminalApp = {
           const code = LumeFS.read(full);
           if (code == null) {
             print(`<span class="err">py: no such file: ${esc(full)}</span>`);
+            printDim(`先造一个：write ${file} "print(1+1)"`);
             return;
           }
           if (!window.LumePy) {
@@ -568,26 +689,36 @@ const TerminalApp = {
             return;
           }
           if (state.pyBusy) {
-            printDim('python is still busy with the last run — give it a second');
+            printDim('python is still busy — press ^C (or type stop) to kill it');
             return;
           }
           state.pyBusy = true;
           const t0 = performance.now();
+          /* stdout/stderr 是「批处理」给的，一次可能好几行，逐行落成
+             终端里的一行一句，别整段塞进一个 div */
+          const dump = (text, isErr) => {
+            String(text).split('\n').forEach((line, i, arr) => {
+              if (i === arr.length - 1 && line === '') return;
+              print(isErr ? `<span class="err">${esc(line)}</span>` : esc(line));
+            });
+          };
           /* 引导是异步的（解 bz2 / 拉 wasm 都要几秒），终端命令本身同步返回，
-             后续输出靠 print 回来即可。 */
+             后续输出靠回调回来即可。 */
           window.LumePy
-            .boot((s) => printDim(s))
-            .then((py) => {
-              /* stdout/stderr 逐行接进终端；print 里会做 esc */
-              py.setStdout({ batched: (s) => print(esc(s)) });
-              py.setStderr({ batched: (s) => print(`<span class="err">${esc(s)}</span>`) });
-              return py.runPythonAsync(code).then((v) => {
-                const ms = Math.round(performance.now() - t0);
-                if (v !== undefined && v !== null) printDim('=> ' + String(v));
-                print(`<span class="u">done</span> <span class="dim">· ${ms} ms</span>`);
-              });
+            .run(code, {
+              log: (s) => printDim(s),
+              out: (s) => dump(s, false),
+              err: (s) => dump(s, true)
+            })
+            .then((r) => {
+              if (r.value) printDim('=> ' + r.value);
+              const ms = r.ms != null ? r.ms : Math.round(performance.now() - t0);
+              print(`<span class="u">done</span> <span class="dim">· ${ms} ms</span>`);
             })
             .catch((e) => {
+              /* Ctrl+C 打断的收尾已经由 stopPython 打印过了，
+                 这里再吐一遍 KeyboardInterrupt 只是噪音 */
+              if (e && e.interrupted) return;
               const msg = e && e.message ? e.message : String(e);
               const lines = msg.split('\n').filter((l) => l.trim());
               /* traceback 最有用的信息在末尾，倒着最多给 12 行 */
@@ -602,6 +733,258 @@ const TerminalApp = {
         }
 
         printDim(`py: unknown subcommand '${sub}' — try: py help`);
+      },
+
+      /* ---------- git ----------
+         isomorphic-git 跑在 LumeGit 里（js/lume-git.js）：
+         工作区还是 LumeFS，.git 目录存 IndexedDB，所以 Files / Editor
+         看到的文件是真的，git 看到的也真的是同一个文件。 */
+      git(args) {
+        const sub = (args[0] || '').toLowerCase();
+        const G = window.LumeGit;
+
+        const usage = () => {
+          print(`<span class="dim">git</span>  ·  isomorphic-git ${G ? G.version : ''}  ·  inside this tab`);
+          print('');
+          [
+            ['git init', '在这个目录建一个仓库'],
+            ['git status', '谁改了、谁还没加进暂存区'],
+            ['git add <path|.>', '加进暂存区'],
+            ['git commit -m "msg"', '提交'],
+            ['git log [n]', '最近的提交'],
+            ['git branch [name]', '列分支 / 建分支'],
+            ['git checkout <ref>', '切分支或回到某个提交'],
+            ['git clone <url> [dir]', '从网上下一个仓库（走 CORS 代理）'],
+            ['git remote', '看远端地址'],
+            ['git push / git pull', '推上去 / 拉下来']
+          ].forEach(([c, d]) => print(`  <span class="u">${esc(padW(c, 26))}</span><span class="dim">${esc(d)}</span>`));
+          print('');
+          printDim('仓库元数据存在 IndexedDB 里，不占 localStorage；');
+          printDim('工作区文件仍然是 LumeFS，Files / Editor 里直接能改。');
+          print('');
+        };
+
+        if (!G) {
+          printDim('git: module not loaded');
+          return;
+        }
+        if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
+          usage();
+          return;
+        }
+
+        /* 命令都是异步的，统一收口，别让一个 rejected promise 变成
+           一个没人管的 console 错误 */
+        const fail = (verb) => (e) => {
+          const msg = (e && e.message) || String(e);
+          if (e && e.code === 'ENOREPO') {
+            print(`<span class="err">git ${verb}: ${esc(msg)}</span>`);
+            printDim(`先来一步：git init`);
+            return;
+          }
+          print(`<span class="err">git ${verb}: ${esc(msg)}</span>`);
+        };
+
+        /* 进度：clone / push 会走网络，不给点反馈会像卡死 */
+        const progress = (() => {
+          let last = '';
+          return (ev) => {
+            if (!ev || !ev.phase) return;
+            const line = ev.phase + (ev.total ? `  ${ev.loaded}/${ev.total}` : '');
+            if (line === last) return;
+            last = line;
+            print(`<span class="dim">${esc(line)}</span>`);
+          };
+        })();
+
+        if (sub === 'init') {
+          G.init(cwd)
+            .then(() => {
+              print(`<span class="u">Initialized</span> <span class="dim">empty git repository in</span> ${esc(cwd)}/.git`);
+            })
+            .catch(fail('init'));
+          return;
+        }
+
+        if (sub === 'status') {
+          G.status(cwd)
+            .then(async (rows) => {
+              const branch = (await G.currentBranch(cwd)) || 'main';
+              print(`<span class="dim">On branch</span> ${esc(branch)}`);
+
+              const staged = rows.filter((r) => r.staged);
+              const unstaged = rows.filter((r) => !r.staged && !r.untracked);
+              const untracked = rows.filter((r) => r.untracked);
+              const label = { A: 'new file', M: 'modified', D: 'deleted' };
+
+              if (staged.length) {
+                print('');
+                printDim('Changes to be committed:');
+                staged.forEach((r) =>
+                  print(`  <span class="u">${esc(padW(label[r.x] || 'changed', 12))}</span>${esc(r.path)}`)
+                );
+              }
+              if (unstaged.length) {
+                print('');
+                printDim('Changes not staged for commit:');
+                unstaged.forEach((r) =>
+                  print(`  <span class="u">${esc(padW(label[r.y] || 'changed', 12))}</span>${esc(r.path)}`)
+                );
+              }
+              if (untracked.length) {
+                print('');
+                printDim('Untracked files:');
+                untracked.forEach((r) => print(`  <span class="dim">${esc(r.path)}</span>`));
+              }
+              print('');
+              if (!rows.length) {
+                printDim('nothing to commit, working tree clean');
+              } else {
+                printDim(
+                  staged.length
+                    ? 'ready to commit — git commit -m "…"'
+                    : 'nothing staged yet — git add . first'
+                );
+              }
+            })
+            .catch(fail('status'));
+          return;
+        }
+
+        if (sub === 'add') {
+          const what = args.slice(1).join(' ').trim();
+          if (!what) {
+            printDim('usage: git add <path…|.>');
+            return;
+          }
+          const files = what === '.' || what === '-A' || what === '--all' ? null : what.split(/\s+/);
+          G.add(cwd, files)
+            .then(() => printDim(files ? `added ${files.join(' ')}` : 'added everything that changed'))
+            .catch(fail('add'));
+          return;
+        }
+
+        if (sub === 'commit') {
+          let msg = '';
+          const rest = args.slice(1);
+          const mi = rest.findIndex((a) => a === '-m' || a === '--message');
+          if (mi >= 0) msg = rest.slice(mi + 1).join(' ');
+          else msg = rest.join(' ');
+          if (!msg) {
+            printDim('usage: git commit -m "message"');
+            return;
+          }
+          G.commit(cwd, msg)
+            .then((sha) => {
+              const head = String(sha).slice(0, 7);
+              print(`<span class="u">[${esc(head)}]</span> ${esc(msg)}`);
+            })
+            .catch(fail('commit'));
+          return;
+        }
+
+        if (sub === 'log') {
+          const n = Number(args[1]) || 12;
+          G.log(cwd, n)
+            .then((commits) => {
+              if (!commits.length) {
+                printDim('no commits yet');
+                return;
+              }
+              commits.forEach((c, i) => {
+                const short = c.oid.slice(0, 7);
+                const when = new Date(c.commit.author.timestamp * 1000).toLocaleString();
+                const head = i === 0 ? ' <span class="u">(HEAD)</span>' : '';
+                print(`<span class="u">${esc(short)}</span>${head}  ${esc(c.commit.message.split('\n')[0])}`);
+                print(`          <span class="dim">${esc(c.commit.author.name)} · ${esc(when)}</span>`);
+              });
+            })
+            .catch(fail('log'));
+          return;
+        }
+
+        if (sub === 'branch') {
+          const name = args[1];
+          if (name) {
+            G.createBranch(cwd, name, false)
+              .then(() => printDim(`branch ${name} created`))
+              .catch(fail('branch'));
+            return;
+          }
+          Promise.all([G.branches(cwd), G.currentBranch(cwd)])
+            .then(([list, cur]) => {
+              if (!list.length) {
+                printDim('no branches yet — make a commit first');
+                return;
+              }
+              list.forEach((b) =>
+                print(b === cur ? `<span class="u">* ${esc(b)}</span>` : `  ${esc(b)}`)
+              );
+            })
+            .catch(fail('branch'));
+          return;
+        }
+
+        if (sub === 'checkout') {
+          const ref = args[1];
+          if (!ref) {
+            printDim('usage: git checkout <branch|commit>');
+            return;
+          }
+          G.checkout(cwd, ref)
+            .then(() => printDim(`switched to ${ref}`))
+            .catch(fail('checkout'));
+          return;
+        }
+
+        if (sub === 'clone') {
+          const url = args[1];
+          if (!url) {
+            printDim('usage: git clone <url> [dir]');
+            return;
+          }
+          const target = LumeFS.resolve(cwd, args[2] || url.replace(/\.git$/, '').split('/').pop() || 'repo');
+          if (LumeFS.exists(target) && !LumeFS.isDir(target)) {
+            print(`<span class="err">git clone: ${esc(target)} exists and is a file</span>`);
+            return;
+          }
+          if (!LumeFS.exists(target)) LumeFS.mkdir(target);
+          printDim(`cloning into ${target} …`);
+          G.clone(target, url, { onProgress: progress })
+            .then(() => print(`<span class="u">cloned</span> ${esc(url)} <span class="dim">→</span> ${esc(target)}`))
+            .catch(fail('clone'));
+          return;
+        }
+
+        if (sub === 'remote') {
+          G.remotes(cwd)
+            .then((list) => {
+              if (!list.length) {
+                printDim('no remotes — git clone adds one, or edit .git/config');
+                return;
+              }
+              list.forEach((r) => print(`<span class="u">${esc(r.remote)}</span>  ${esc(r.url)}`));
+            })
+            .catch(fail('remote'));
+          return;
+        }
+
+        if (sub === 'push' || sub === 'pull' || sub === 'fetch') {
+          printDim(`${sub} …`);
+          const opts = { onProgress: progress };
+          G[sub](cwd, opts)
+            .then(() => print(`<span class="u">${sub} ok</span>`))
+            .catch((e) => {
+              fail(sub)(e);
+              if (/CORS|Failed to fetch|401|403/i.test((e && e.message) || '')) {
+                printDim('远端要认证的话，public 仓库才能直接拉；私有库需要 token，');
+                printDim('浏览器里还得有 CORS 代理（默认走 cors.isomorphic-git.org）。');
+              }
+            });
+          return;
+        }
+
+        printDim(`git: unknown subcommand '${sub}' — try: git help`);
       },
 
       neofetch() {
@@ -730,6 +1113,130 @@ const TerminalApp = {
         window.LumeOS.closeFocused();
       },
 
+      /* ---- 网络：curl / wget（受 CORS 限制，尽量用支持 CORS 的公开 API）---- */
+      curl(args) {
+        const url = args[0];
+        if (!url) { printDim('usage: curl <url>'); return; }
+        printDim('→ ' + url);
+        fetch(url, { mode: 'cors' })
+          .then((r) => {
+            print(`<span class="dim">HTTP ${r.status} ${esc(r.statusText || '')}</span>`);
+            return r.text();
+          })
+          .then((txt) => {
+            if (txt.length > 6000) txt = txt.slice(0, 6000) + `\n… (${(txt.length - 6000)} more bytes truncated)`;
+            print(`<pre class="curl-out">${esc(txt)}</pre>`);
+          })
+          .catch((e) => {
+            print(`<span class="err">curl: ${esc(e.message)}</span>`);
+            printDim('CORS 可能拦了跨域请求；试试 httpbin.org/get 或 jsonplaceholder.typicode.com/todos/1');
+          });
+      },
+
+      wget(args) {
+        let url = null, out2 = null;
+        for (let i = 0; i < args.length; i++) {
+          if (args[i] === '-O') out2 = args[++i];
+          else if (!url) url = args[i];
+        }
+        if (!url) { printDim('usage: wget <url> [-O file]'); return; }
+        if (!out2) {
+          out2 = decodeURIComponent(url.split('/').pop().split('?')[0]);
+          if (!out2) out2 = 'index.html';
+        }
+        const dest = LumeFS.resolve(cwd, out2);
+        printDim('→ ' + url + '  →  ' + LumeFS.baseOf(dest));
+        fetch(url, { mode: 'cors' })
+          .then((r) => r.text())
+          .then((txt) => {
+            const wrote = LumeFS.write(dest, txt);
+            print(`<span class="dim">saved ${txt.length} bytes → ${esc(LumeFS.baseOf(dest))}${wrote ? '' : ' (write failed)'}</span>`);
+          })
+          .catch((e) => {
+            print(`<span class="err">wget: ${esc(e.message)}</span>`);
+          });
+      },
+
+      /* ---- 终端彩蛋 ---- */
+      fortune() {
+        const quotes = [
+          'Unix is user-friendly. It just picks its friends carefully.',
+          'There are 10 kinds of people: those who understand binary, and those who don’t.',
+          'The best way to predict the future is to invent it.',
+          'Talk is cheap. Show me the code. — Linus Torvalds',
+          'First, solve the problem. Then, write the code.',
+          'Premature optimization is the root of all evil. — Donald Knuth',
+          'A Lume a day keeps the segfault away.',
+          'Walking on water and developing software from a spec are easy if both are frozen.',
+          'Have you tried turning it off and on again?'
+        ];
+        printDim('“' + quotes[Math.floor(Math.random() * quotes.length)] + '”');
+      },
+
+      cowsay(args) {
+        const t = (args.join(' ') || 'Moo!').trim();
+        const inner = ' ' + t + ' ';
+        const top = ' ' + '_'.repeat(inner.length);
+        const bot = ' ' + '-'.repeat(inner.length);
+        const cow = [
+          "        \\   ^__^",
+          "         \\  (oo)\\_______",
+          "            (__)\\       )\\/\\",
+          "                ||----w |",
+          "                ||     ||"
+        ];
+        print('<pre class="cow">' + esc(top) + '\n< ' + esc(t) + ' >\n' + esc(bot) +
+          '\n' + cow.map(esc).join('\n') + '</pre>');
+      },
+
+      cmatrix() {
+        stopLive();
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.min(560, (out.clientWidth || 540) - 28);
+        canvas.height = 240;
+        canvas.style.cssText = 'display:block;background:#000;margin:8px 0;border-radius:6px;';
+        out.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
+        const fontSize = 12;
+        const cols = Math.max(1, Math.floor(canvas.width / fontSize));
+        const drops = new Array(cols).fill(0).map(() => Math.random() * (canvas.height / fontSize));
+        const glyphs = '01アイウエオカキクケコ日月木水火土山川ABCDEFｱｲｳ0123456789';
+        const id = setInterval(() => {
+          ctx.fillStyle = 'rgba(0,0,0,0.09)';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = '#27f08a';
+          ctx.font = fontSize + 'px monospace';
+          for (let i = 0; i < cols; i++) {
+            const ch = glyphs[Math.floor(Math.random() * glyphs.length)];
+            ctx.fillText(ch, i * fontSize, drops[i] * fontSize);
+            if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
+            drops[i]++;
+          }
+        }, 55);
+        live = { el: canvas, stop: () => clearInterval(id) };
+        scroll();
+      },
+
+      sl() {
+        stopLive();
+        const el = document.createElement('div');
+        el.className = 'term-line';
+        out.appendChild(el);
+        const train = '  ===[o][o]==   chug-chug   🚂  ';
+        const pad = 54;
+        let pos = 0, loops = 0;
+        const id = setInterval(() => {
+          el.textContent = ' '.repeat(pos) + train;
+          pos++;
+          if (pos > pad) {
+            pos = 0; loops++;
+            if (loops >= 2) { clearInterval(id); el.textContent = ''; live = null; return; }
+          }
+          scroll();
+        }, 70);
+        live = { el, stop: () => clearInterval(id) };
+      },
+
       /* 关机不是关窗口，是整个系统下线。
          和不带参数的 py 一样，这里也接受 --help。 */
       shutdown(args) {
@@ -743,6 +1250,7 @@ const TerminalApp = {
 
     const run = (raw) => {
       const line = raw.trim();
+      stopLive();
       print(`<span class="dim">${esc(promptPath())} %</span> ${esc(line)}`);
       if (!line) return;
 
@@ -752,6 +1260,14 @@ const TerminalApp = {
       const parts = line.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
       const cmd = parts[0].toLowerCase();
       const args = parts.slice(1).map((a) => a.replace(/^"|"$/g, ''));
+
+      /* python 跑着的时候，敲 stop 跟按 Ctrl+C 一个效果（手机上没有
+         Ctrl 键，自绘键盘也没有 —— 这条路是给触屏留的）。
+         空闲时也给一句明确回应，比 command not found 像样。 */
+      if (/^(stop|kill|\^c|ctrl-c)$/i.test(cmd)) {
+        stopPython();
+        return;
+      }
 
       if (COMMANDS[cmd]) {
         try {
@@ -809,6 +1325,16 @@ const TerminalApp = {
       } else if (e.key === 'l' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         out.innerHTML = '';
+      }
+    });
+
+    body.addEventListener('keydown', (e) => {
+      /* 只有 python 正在跑的时候才抢 Ctrl+C —— 空闲时它还是「复制」。
+         挂在 body 上而不是输入框上：焦点跑到输出区时也能按 */
+      if (!state.pyBusy) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        stopPython();
       }
     });
 
@@ -2221,11 +2747,382 @@ const BrowserApp = {
   }
 };
 
+/* ============================================================ */
+/*  Games + Dev tools (canvas / fetch)                           */
+/* ============================================================ */
+
+/* 只在本窗口聚焦且还挂在 DOM 上时才接管键盘，避免抢别的窗口的键。 */
+function gameFocusGuard(body) {
+  const win = body.closest('.window');
+  return () => !!(win && win.classList.contains('focused') && body.isConnected);
+}
+
+/* 窗口关掉后清掉挂在 document 上的监听器，避免泄漏。 */
+function autoCleanup(body, fn) {
+  const t = setInterval(() => {
+    if (!body.isConnected) { clearInterval(t); fn(); }
+  }, 400);
+}
+
+/* ---------------- Snake ---------------- */
+const SnakeApp = {
+  id: 'snake', name: 'Snake', icon: 'snake', width: 380, height: 470,
+  mount(body) {
+    body.innerHTML = `
+      <div class="game-wrap">
+        <div class="game-bar">
+          <span class="game-title">Snake</span>
+          <span class="game-score">Score: <b>0</b></span>
+          <button class="game-btn" data-act="restart">Restart</button>
+        </div>
+        <canvas class="game-canvas" width="340" height="340"></canvas>
+        <div class="game-hint">Arrows / WASD · eat the green dot · don't bite yourself</div>
+      </div>`;
+    const cv = body.querySelector('.game-canvas');
+    const ctx = cv.getContext('2d');
+    const scoreEl = body.querySelector('.game-score b');
+    const N = 17, S = 20;
+    let snake, dir, nextDir, food, score, alive, timer;
+
+    const randFood = () => {
+      let p;
+      do { p = { x: (Math.random() * N) | 0, y: (Math.random() * N) | 0 }; }
+      while (snake && snake.some((s) => s.x === p.x && s.y === p.y));
+      return p;
+    };
+    const draw = () => {
+      ctx.fillStyle = '#0a0a0e'; ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+      for (let i = 0; i <= N; i++) {
+        ctx.beginPath(); ctx.moveTo(i * S, 0); ctx.lineTo(i * S, cv.height); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i * S); ctx.lineTo(cv.width, i * S); ctx.stroke();
+      }
+      ctx.fillStyle = '#27f08a';
+      ctx.fillRect(food.x * S + 3, food.y * S + 3, S - 6, S - 6);
+      snake.forEach((s, i) => {
+        ctx.fillStyle = i === 0 ? '#6ea8fe' : '#3b6ea5';
+        ctx.fillRect(s.x * S + 1, s.y * S + 1, S - 2, S - 2);
+      });
+      if (!alive) {
+        ctx.fillStyle = 'rgba(0,0,0,0.62)'; ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('Game Over', cv.width / 2, cv.height / 2);
+      }
+    };
+    const reset = () => {
+      snake = [{ x: 8, y: 8 }, { x: 7, y: 8 }, { x: 6, y: 8 }];
+      dir = { x: 1, y: 0 }; nextDir = dir; food = randFood();
+      score = 0; alive = true; scoreEl.textContent = '0'; draw();
+    };
+    const step = () => {
+      if (!alive) return;
+      dir = nextDir;
+      const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+      if (head.x < 0 || head.y < 0 || head.x >= N || head.y >= N ||
+          snake.some((s) => s.x === head.x && s.y === head.y)) { alive = false; draw(); return; }
+      snake.unshift(head);
+      if (head.x === food.x && head.y === food.y) { score++; scoreEl.textContent = String(score); food = randFood(); }
+      else snake.pop();
+      draw();
+    };
+    const onKey = (e) => {
+      if (!alive) return;
+      const k = e.key.toLowerCase();
+      let nd = null;
+      if (k === 'arrowup' || k === 'w') nd = { x: 0, y: -1 };
+      else if (k === 'arrowdown' || k === 's') nd = { x: 0, y: 1 };
+      else if (k === 'arrowleft' || k === 'a') nd = { x: -1, y: 0 };
+      else if (k === 'arrowright' || k === 'd') nd = { x: 1, y: 0 };
+      if (!nd) return;
+      if (nd.x === -dir.x && nd.y === -dir.y) return; /* no reversing */
+      nextDir = nd; e.preventDefault();
+    };
+    const guard = gameFocusGuard(body);
+    const docKey = (e) => { if (!guard()) return; onKey(e); };
+    document.addEventListener('keydown', docKey);
+    body.querySelector('[data-act="restart"]').addEventListener('click', reset);
+    reset();
+    timer = setInterval(() => {
+      if (!body.isConnected) { clearInterval(timer); document.removeEventListener('keydown', docKey); return; }
+      step();
+    }, 120);
+  }
+};
+
+/* ---------------- 2048 ---------------- */
+const Game2048App = {
+  id: 'g2048', name: '2048', icon: 'g2048', width: 380, height: 470,
+  mount(body) {
+    body.innerHTML = `
+      <div class="game-wrap">
+        <div class="game-bar">
+          <span class="game-title">2048</span>
+          <span class="game-score">Score: <b>0</b></span>
+          <button class="game-btn" data-act="restart">Restart</button>
+        </div>
+        <canvas class="game-canvas" width="340" height="340"></canvas>
+        <div class="game-hint">Arrows / WASD to slide tiles</div>
+      </div>`;
+    const cv = body.querySelector('.game-canvas');
+    const ctx = cv.getContext('2d');
+    const scoreEl = body.querySelector('.game-score b');
+    const N = 4, S = 85;
+    const COLORS = { 2: '#3a3f4b', 4: '#4a5568', 8: '#7c5cff', 16: '#a855f7', 32: '#db2777',
+      64: '#e11d48', 128: '#f59e0b', 256: '#fbbf24', 512: '#34d399', 1024: '#22d3ee', 2048: '#22c55e' };
+    let grid, score;
+
+    const roundRect = (x, y, w, h, r) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+    };
+    const draw = () => {
+      ctx.fillStyle = '#11131a'; ctx.fillRect(0, 0, cv.width, cv.height);
+      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+        const v = grid[r][c], x = c * S, y = r * S;
+        ctx.fillStyle = v ? (COLORS[v] || '#22c55e') : '#1a1d27';
+        roundRect(x + 6, y + 6, S - 12, S - 12, 8); ctx.fill();
+        if (v) {
+          ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (v < 100 ? 30 : v < 1000 ? 26 : 20) + 'px monospace';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(String(v), x + S / 2, y + S / 2);
+        }
+      }
+    };
+    const addTile = () => {
+      const empty = [];
+      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!grid[r][c]) empty.push([r, c]);
+      if (!empty.length) return;
+      const [r, c] = empty[(Math.random() * empty.length) | 0];
+      grid[r][c] = Math.random() < 0.9 ? 2 : 4;
+    };
+    const slide = (arr) => {
+      const a = arr.filter((v) => v); const res = [];
+      for (let i = 0; i < a.length; i++) {
+        if (a[i] === a[i + 1]) { res.push(a[i] * 2); score += a[i] * 2; i++; }
+        else res.push(a[i]);
+      }
+      while (res.length < N) res.push(0);
+      return res;
+    };
+    const move = (d) => {
+      let moved = false;
+      if (d === 'left' || d === 'right') {
+        for (let r = 0; r < N; r++) {
+          let row = grid[r].slice();
+          if (d === 'right') row.reverse();
+          const before = row.join(',');
+          row = slide(row);
+          if (d === 'right') row.reverse();
+          if (row.join(',') !== before) moved = true;
+          grid[r] = row;
+        }
+      } else {
+        for (let c = 0; c < N; c++) {
+          let col = []; for (let r = 0; r < N; r++) col.push(grid[r][c]);
+          if (d === 'down') col.reverse();
+          const before = col.join(',');
+          col = slide(col);
+          if (d === 'down') col.reverse();
+          if (col.join(',') !== before) moved = true;
+          for (let r = 0; r < N; r++) grid[r][c] = col[r];
+        }
+      }
+      if (moved) { addTile(); draw(); scoreEl.textContent = String(score); }
+    };
+    const onKey = (e) => {
+      const k = e.key.toLowerCase();
+      let d = null;
+      if (k === 'arrowup' || k === 'w') d = 'up';
+      else if (k === 'arrowdown' || k === 's') d = 'down';
+      else if (k === 'arrowleft' || k === 'a') d = 'left';
+      else if (k === 'arrowright' || k === 'd') d = 'right';
+      if (!d) return;
+      e.preventDefault(); move(d);
+    };
+    const guard = gameFocusGuard(body);
+    const docKey = (e) => { if (!guard()) return; onKey(e); };
+    document.addEventListener('keydown', docKey);
+    body.querySelector('[data-act="restart"]').addEventListener('click', () => {
+      grid = Array.from({ length: N }, () => Array(N).fill(0));
+      score = 0; scoreEl.textContent = '0'; addTile(); addTile(); draw();
+    });
+    grid = Array.from({ length: N }, () => Array(N).fill(0));
+    score = 0; addTile(); addTile(); draw();
+    autoCleanup(body, () => document.removeEventListener('keydown', docKey));
+  }
+};
+
+/* ---------------- Minesweeper ---------------- */
+const MinesApp = {
+  id: 'mine', name: 'Minesweeper', icon: 'mine', width: 380, height: 440,
+  mount(body) {
+    body.innerHTML = `
+      <div class="game-wrap">
+        <div class="game-bar">
+          <span class="game-title">Mines</span>
+          <span class="game-score">Mines: <b>40</b></span>
+          <button class="game-btn" data-act="restart">New</button>
+        </div>
+        <canvas class="game-canvas" width="340" height="340"></canvas>
+        <div class="game-hint">Left-click reveal · Right-click flag</div>
+      </div>`;
+    const cv = body.querySelector('.game-canvas');
+    const ctx = cv.getContext('2d');
+    const N = 17, S = 20, MINES = 40;
+    let board, revealed, flagged, dead, cleared;
+
+    const reset = () => {
+      board = Array.from({ length: N }, () => Array(N).fill(0));
+      revealed = Array.from({ length: N }, () => Array(N).fill(false));
+      flagged = Array.from({ length: N }, () => Array(N).fill(false));
+      dead = false; cleared = false;
+      let placed = 0;
+      while (placed < MINES) {
+        const r = (Math.random() * N) | 0, c = (Math.random() * N) | 0;
+        if (board[r][c] !== -1) { board[r][c] = -1; placed++; }
+      }
+      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (board[r][c] !== -1) {
+        let n = 0;
+        for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+          const rr = r + dr, cc = c + dc;
+          if (rr >= 0 && cc >= 0 && rr < N && cc < N && board[rr][cc] === -1) n++;
+        }
+        board[r][c] = n;
+      }
+      draw();
+    };
+    const draw = () => {
+      ctx.fillStyle = '#11131a'; ctx.fillRect(0, 0, cv.width, cv.height);
+      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+        const x = c * S, y = r * S;
+        if (revealed[r][c]) {
+          ctx.fillStyle = '#232733'; ctx.fillRect(x + 1, y + 1, S - 2, S - 2);
+          const v = board[r][c];
+          if (v === -1) { ctx.fillStyle = '#e11d48'; ctx.fillRect(x + 1, y + 1, S - 2, S - 2); }
+          else if (v > 0) {
+            ctx.fillStyle = '#9fb3c8'; ctx.font = 'bold 13px monospace';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(String(v), x + S / 2, y + S / 2);
+          }
+        } else {
+          ctx.fillStyle = flagged[r][c] ? '#3a2f1a' : '#2b3040';
+          ctx.fillRect(x + 1, y + 1, S - 2, S - 2);
+          if (flagged[r][c]) {
+            ctx.fillStyle = '#fbbf24'; ctx.font = '13px monospace';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText('⚑', x + S / 2, y + S / 2);
+          }
+        }
+      }
+      if (dead) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.fillStyle = '#fff'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.fillText('Boom!', cv.width / 2, cv.height / 2); }
+      if (cleared) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.fillStyle = '#22c55e'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.fillText('Cleared!', cv.width / 2, cv.height / 2); }
+    };
+    const flood = (sr, sc) => {
+      const stack = [[sr, sc]];
+      while (stack.length) {
+        const [y, x] = stack.pop();
+        if (y < 0 || x < 0 || y >= N || x >= N || revealed[y][x] || flagged[y][x]) continue;
+        revealed[y][x] = true;
+        if (board[y][x] === 0) for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) stack.push([y + dr, x + dc]);
+      }
+    };
+    const reveal = (r, c) => {
+      if (dead || cleared || flagged[r][c] || revealed[r][c]) return;
+      if (board[r][c] === -1) { dead = true; revealed[r][c] = true; draw(); return; }
+      flood(r, c); draw();
+      let ok = true;
+      for (let rr = 0; rr < N; rr++) for (let cc = 0; cc < N; cc++) if (board[rr][cc] !== -1 && !revealed[rr][cc]) ok = false;
+      if (ok) cleared = true;
+    };
+    const cell = (e) => {
+      const rect = cv.getBoundingClientRect();
+      return [((e.clientX - rect.left) / S) | 0, ((e.clientY - rect.top) / S) | 0];
+    };
+    cv.addEventListener('click', (e) => {
+      if (!body.isConnected) return;
+      const [c, r] = cell(e);
+      if (r >= 0 && c >= 0 && r < N && c < N) reveal(r, c);
+    });
+    cv.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (!body.isConnected) return;
+      const [c, r] = cell(e);
+      if (r >= 0 && c >= 0 && r < N && c < N && !revealed[r][c]) { flagged[r][c] = !flagged[r][c]; draw(); }
+    });
+    body.querySelector('[data-act="restart"]').addEventListener('click', reset);
+    reset();
+  }
+};
+
+/* ---------------- API Tester (mini Postman) ---------------- */
+const ApiApp = {
+  id: 'api', name: 'API Tester', icon: 'api', width: 580, height: 500,
+  mount(body) {
+    body.innerHTML = `
+      <div class="api">
+        <div class="api-row">
+          <select class="api-method">
+            <option>GET</option><option>POST</option><option>PUT</option>
+            <option>DELETE</option><option>PATCH</option>
+          </select>
+          <input class="api-url" type="text" spellcheck="false"
+            placeholder="https://httpbin.org/get" value="https://httpbin.org/get" />
+          <button class="api-send">Send</button>
+        </div>
+        <details class="api-det"><summary>Headers (JSON)</summary>
+          <textarea class="api-headers" spellcheck="false">{}</textarea></details>
+        <details class="api-det"><summary>Body (JSON / text)</summary>
+          <textarea class="api-body" spellcheck="false"></textarea></details>
+        <div class="api-resp">
+          <div class="api-meta"></div>
+          <pre class="api-out"></pre>
+        </div>
+        <div class="api-note">浏览器的 CORS 会拦大部分跨域请求。试试 httpbin.org 或 jsonplaceholder.typicode.com。</div>
+      </div>`;
+    const $ = (s) => body.querySelector(s);
+    const methodEl = $('.api-method'), urlEl = $('.api-url'), headersEl = $('.api-headers'),
+      bodyEl = $('.api-body'), sendBtn = $('.api-send'), metaEl = $('.api-meta'), outEl = $('.api-out');
+
+    const send = async () => {
+      const url = urlEl.value.trim();
+      if (!url) { metaEl.textContent = 'URL 不能为空'; return; }
+      let headers = {};
+      try { headers = JSON.parse(headersEl.value || '{}'); }
+      catch (err) { metaEl.textContent = 'Headers 不是合法 JSON'; return; }
+      const method = methodEl.value, bodyText = bodyEl.value;
+      metaEl.textContent = '请求中…'; outEl.textContent = '';
+      const t0 = performance.now();
+      try {
+        const init = { method, headers };
+        if (method !== 'GET' && method !== 'DELETE' && bodyText) init.body = bodyText;
+        const res = await fetch(url, Object.assign(init, { mode: 'cors' }));
+        const ms = Math.round(performance.now() - t0);
+        const text = await res.text();
+        metaEl.textContent = `${res.status} ${res.statusText} · ${ms} ms · ${text.length} B`;
+        let pretty = text;
+        try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* keep raw */ }
+        if (pretty.length > 20000) pretty = pretty.slice(0, 20000) + '\n…(truncated)';
+        outEl.textContent = pretty;
+      } catch (err) {
+        metaEl.textContent = '错误：' + err.message;
+        outEl.textContent = 'CORS 或网络问题可能导致失败。试试支持 CORS 的公开 API（httpbin.org、jsonplaceholder）。';
+      }
+    };
+    sendBtn.addEventListener('click', send);
+    urlEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  }
+};
+
 const APPS = {
   terminal: TerminalApp,
   files: FilesApp,
   editor: EditorApp,
   settings: SettingsApp,
   about: AboutApp,
-  browser: BrowserApp
+  browser: BrowserApp,
+  snake: SnakeApp,
+  g2048: Game2048App,
+  mine: MinesApp,
+  api: ApiApp
 };

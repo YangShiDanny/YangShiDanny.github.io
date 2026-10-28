@@ -515,6 +515,227 @@
   }
 
   /* -------------------------------------------------------- */
+  /*  通知 / 控制中心 / 屏保 / 导览 / 插件                        */
+  /* -------------------------------------------------------- */
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  /* ---- 通知 ---- */
+  const notifications = [];
+  let notifUnread = 0;
+  function postNotification(opts) {
+    opts = opts || {};
+    const note = { title: opts.title || 'Notification', body: opts.body || '', app: opts.app || '', time: Date.now() };
+    notifications.unshift(note);
+    if (notifications.length > 60) notifications.pop();
+    notifUnread++;
+    updateBell();
+    renderNotifPanel();
+    toast((note.app ? '[' + note.app + '] ' : '') + note.title);
+  }
+  function updateBell() {
+    const bell = $('#bell');
+    if (!bell) return;
+    bell.classList.toggle('has-unread', notifUnread > 0);
+    const badge = bell.querySelector('.bell-badge');
+    if (badge) badge.textContent = notifUnread > 99 ? '99+' : String(notifUnread);
+  }
+  function renderNotifPanel() {
+    const panel = $('#notif-panel');
+    if (!panel) return;
+    if (!notifications.length) { panel.innerHTML = '<div class="panel-empty">No notifications yet</div>'; return; }
+    panel.innerHTML = notifications.map((n) =>
+      '<div class="notif-item">' +
+        '<div class="notif-top">' +
+          '<span class="notif-title">' + esc(n.title) + '</span>' +
+          (n.app ? '<span class="notif-app">' + esc(n.app) + '</span>' : '') +
+        '</div>' +
+        (n.body ? '<div class="notif-body">' + esc(n.body) + '</div>' : '') +
+      '</div>'
+    ).join('');
+  }
+
+  /* ---- 控制中心 ---- */
+  let lumBrightness = 1, lumVolume = 0.6;
+  function applyBrightness() { root.style.setProperty('--lum-bright', String(lumBrightness)); }
+  function wireControlCenter() {
+    const panel = $('#cc-panel');
+    if (!panel) return;
+    const bright = panel.querySelector('[data-cc="bright"]');
+    const vol = panel.querySelector('[data-cc="vol"]');
+    const themeBtn = panel.querySelector('[data-cc="theme"]');
+    const wifi = panel.querySelector('[data-cc="wifi"]');
+    const bt = panel.querySelector('[data-cc="bt"]');
+    if (bright) bright.addEventListener('input', () => { lumBrightness = Number(bright.value) / 100; applyBrightness(); });
+    if (vol) vol.addEventListener('input', () => { lumVolume = Number(vol.value) / 100; });
+    if (themeBtn) themeBtn.addEventListener('click', () => setTheme(root.dataset.theme === 'light' ? 'dark' : 'light'));
+    if (wifi) wifi.addEventListener('click', () => wifi.classList.toggle('on'));
+    if (bt) bt.addEventListener('click', () => bt.classList.toggle('on'));
+  }
+  function wireMenubarExtras() {
+    const bell = $('#bell');
+    const ccBtn = $('#cc');
+    const notifPanel = $('#notif-panel');
+    const ccPanel = $('#cc-panel');
+    if (bell) bell.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = notifPanel && !notifPanel.hidden;
+      if (notifPanel) notifPanel.hidden = open;
+      if (ccPanel) ccPanel.hidden = true;
+      if (!open) { notifUnread = 0; updateBell(); renderNotifPanel(); }
+    });
+    if (ccBtn) ccBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = ccPanel && !ccPanel.hidden;
+      if (ccPanel) ccPanel.hidden = open;
+      if (notifPanel) notifPanel.hidden = true;
+    });
+    document.addEventListener('click', (e) => {
+      if (notifPanel && !notifPanel.hidden && !e.target.closest('#notif-panel') && !e.target.closest('#bell')) notifPanel.hidden = true;
+      if (ccPanel && !ccPanel.hidden && !e.target.closest('#cc-panel') && !e.target.closest('#cc')) ccPanel.hidden = true;
+    });
+  }
+
+  /* ---- 屏保 ---- */
+  let idleTimer = null;
+  function showScreensaver() {
+    const sv = $('#screensaver');
+    if (!sv) return;
+    sv.hidden = false; sv.classList.add('on');
+    const cv = sv.querySelector('canvas');
+    const clk = sv.querySelector('.sv-clock');
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    cv.width = sv.clientWidth || window.innerWidth;
+    cv.height = sv.clientHeight || window.innerHeight;
+    const stars = Array.from({ length: 140 }, () => ({
+      x: Math.random() * cv.width, y: Math.random() * cv.height,
+      r: Math.random() * 1.7 + 0.4, s: Math.random() * 0.4 + 0.08
+    }));
+    const frame = () => {
+      if (sv.hidden) return;
+      ctx.fillStyle = 'rgba(2,2,6,0.22)'; ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.fillStyle = '#dfe7ff';
+      stars.forEach((st) => { ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 7); ctx.fill(); st.y += st.s; if (st.y > cv.height) { st.y = 0; st.x = Math.random() * cv.width; } });
+      sv._raf = requestAnimationFrame(frame);
+    };
+    cancelAnimationFrame(sv._raf || 0); frame();
+    const tick = () => { if (sv.hidden) return; if (clk) clk.textContent = new Date().toLocaleTimeString(); sv._ct = setTimeout(tick, 1000); };
+    clearTimeout(sv._ct); tick();
+  }
+  function resetIdle() {
+    const sv = $('#screensaver');
+    if (sv && !sv.hidden) { sv.hidden = true; sv.classList.remove('on'); cancelAnimationFrame(sv._raf || 0); clearTimeout(sv._ct); }
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(showScreensaver, 90000);
+  }
+
+  /* ---- 首次启动导览 ---- */
+  function startTour() {
+    const sv = $('#tour');
+    if (!sv) return;
+    const steps = [
+      { sel: '#menubar', title: 'Menu bar', text: 'System name, search (⌘K), theme, a notification bell and a control center live up here.' },
+      { sel: '#dock', title: 'Dock', text: 'Your apps. Click to open. New games and tools appear here automatically.' },
+      { sel: '#desk-icons', title: 'Desktop', text: 'Files and shortcuts live here. Drag files from your computer onto the desktop to import them.' },
+      { sel: '#dock-power', title: 'Power', text: 'Sleep, restart or shut down from here.' }
+    ];
+    let i = 0;
+    const titleEl = sv.querySelector('.tour-title');
+    const textEl = sv.querySelector('.tour-text');
+    const nextBtn = sv.querySelector('[data-tour="next"]');
+    const skipBtn = sv.querySelector('[data-tour="skip"]');
+    const dots = sv.querySelectorAll('.tour-dots i');
+    function showStep() {
+      if (i >= steps.length) return endTour();
+      const s = steps[i];
+      $$('.tour-hi').forEach((n) => n.classList.remove('tour-hi'));
+      const target = $(s.sel);
+      if (target) target.classList.add('tour-hi');
+      if (titleEl) titleEl.textContent = s.title;
+      if (textEl) textEl.textContent = s.text;
+      dots.forEach((d, di) => d.classList.toggle('on', di === i));
+    }
+    function endTour() {
+      sv.hidden = true; sv.classList.remove('on');
+      $$('.tour-hi').forEach((n) => n.classList.remove('tour-hi'));
+      try { sessionStorage.setItem('lume.tour', '1'); } catch (e) {}
+    }
+    sv.hidden = false; sv.classList.add('on'); showStep();
+    if (nextBtn) nextBtn.onclick = () => { i++; showStep(); };
+    if (skipBtn) skipBtn.onclick = endTour;
+  }
+
+  /* ---- 插件系统 ---- */
+  function onDragFile(path, name) {
+    return (e) => {
+      const content = LumeFS.read(path);
+      if (content == null) return;
+      const blob = new Blob([content], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      e.dataTransfer.setData('DownloadURL', 'application/octet-stream:' + name + ':' + url);
+      e.dataTransfer.setData('text/plain', name);
+    };
+  }
+  function loadPlugins() {
+    try {
+      const dir = LumeFS.HOME + '/plugins';
+      if (!LumeFS.isDir(dir)) return;
+      LumeFS.list(dir).filter((f) => f.type === 'file' && f.name.endsWith('.js')).forEach((f) => {
+        try {
+          const code = LumeFS.read(f.path);
+          if (!code) return;
+          const reg = (app) => {
+            if (!app || !app.id || !app.mount) throw new Error('plugin must export {id,name,icon,mount}');
+            APPS[app.id] = app;
+            if (app.icon && !ICON[app.icon]) ICON[app.icon] = ICON.app || ICON.file;
+            buildDock();
+            postNotification({ title: 'Plugin loaded', body: app.name || app.id, app: 'LumeOS' });
+          };
+          const fn = new Function('registerApp', 'LumeOS', 'LumeFS', 'ICON', 'window', 'document', code);
+          fn(reg, window.LumeOS, LumeFS, ICON, window, document);
+        } catch (e) {
+          postNotification({ title: 'Plugin failed', body: f.name + ': ' + e.message, app: 'LumeOS' });
+        }
+      });
+    } catch (e) { /* no plugins dir yet */ }
+  }
+  function setupSystemFeatures() {
+    wireMenubarExtras();
+    wireControlCenter();
+    const desk = el.desktop;
+    if (desk) {
+      desk.addEventListener('dragover', (e) => { e.preventDefault(); desk.classList.add('drop-active'); });
+      desk.addEventListener('dragleave', (e) => { if (e.target === desk) desk.classList.remove('drop-active'); });
+      desk.addEventListener('drop', (e) => {
+        e.preventDefault(); desk.classList.remove('drop-active');
+        const files = e.dataTransfer && e.dataTransfer.files;
+        if (!files || !files.length) return;
+        let n = 0;
+        Array.from(files).forEach((file) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dest = LumeFS.resolve(LumeFS.DESKTOP, file.name);
+            LumeFS.write(dest, reader.result);
+            if (++n === files.length) {
+              window.dispatchEvent(new Event('lume:fs'));
+              postNotification({ title: 'Files imported', body: files.length + ' file(s) → Desktop', app: 'LumeOS' });
+            }
+          };
+          reader.readAsText(file);
+        });
+      });
+    }
+    ['pointermove', 'pointerdown', 'keydown', 'wheel'].forEach((ev) => window.addEventListener(ev, resetIdle, { passive: true }));
+    resetIdle();
+    loadPlugins();
+    try {
+      const isLocal = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+      if (!isLocal && sessionStorage.getItem('lume.tour') !== '1') startTour();
+    } catch (e) {}
+  }
+
+  /* -------------------------------------------------------- */
   /*  窗口管理                                                  */
   /* -------------------------------------------------------- */
   const LIGHT = {
@@ -899,12 +1120,15 @@
     });
 
     LumeFS.list(LumeFS.DESKTOP).forEach((item) => {
-      frag.appendChild(
-        makeDeskIcon(item.type === 'dir' ? ICON.folder : ICON.file, item.name, {
-          path: item.path,
-          type: item.type
-        })
-      );
+      const node = makeDeskIcon(item.type === 'dir' ? ICON.folder : ICON.file, item.name, {
+        path: item.path,
+        type: item.type
+      });
+      if (item.type === 'file') {
+        node.draggable = true;
+        node.addEventListener('dragstart', onDragFile(item.path, item.name));
+      }
+      frag.appendChild(node);
     });
 
     el.deskIcons.innerHTML = '';
@@ -2681,10 +2905,13 @@
     });
   }
 
+  setupSystemFeatures();
+
   window.LumeOS = {
     openApp: openApp,
     closeFocused: closeFocused,
     toast: toast,
+    postNotification: postNotification,
     setTheme: setTheme,
     setWall: setWall,
     setAccent: setAccent,
