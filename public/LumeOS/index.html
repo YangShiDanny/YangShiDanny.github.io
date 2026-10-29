@@ -177,12 +177,7 @@
         <button class="cc-toggle on" data-cc="wifi" type="button">Wi-Fi</button>
         <button class="cc-toggle" data-cc="bt" type="button">Bluetooth</button>
       </div>
-    </div>
-
-    <!-- 屏保 -->
-    <div class="screensaver" id="screensaver" hidden>
-      <canvas></canvas>
-      <div class="sv-clock">--:--</div>
+      <button class="cc-link" data-cc="settings" type="button">Open Settings</button>
     </div>
 
     <!-- 首次启动导览 -->
@@ -198,6 +193,15 @@
       </div>
     </div>
   </div>
+
+  <!-- 屏保：必须放在 .desktop 之外，否则 z-index 1 的父层会把它压在菜单栏下面 -->
+  <div class="screensaver" id="screensaver" hidden>
+    <canvas></canvas>
+    <div class="sv-clock">--:--</div>
+  </div>
+
+  <!-- 屏幕调光层：控制中心的亮度滑块推它，压在所有内容之上、屏保之下 -->
+  <div class="dim" id="dim" aria-hidden="true"></div>
 
   <!-- 锁屏 / 关机 -->
   <div class="veil" id="veil" hidden>

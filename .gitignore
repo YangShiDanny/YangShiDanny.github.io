@@ -10,7 +10,8 @@ public/LumeOS/version.json
 node_modules/
 
 # 本地 Python 运行时（scripts/pyodide-vendor.cjs 解出来的 13MB 二进制）
-# 只给 localhost 用，不进仓库、不进 dist
+# 落点是 public/LumeOS/vendor/pyodide —— 只有 public 下的文件能被 dev server
+# 端出来；仓库里不放它，CI 构建也就不会把它带进 dist
 vendor/
 
 # logs

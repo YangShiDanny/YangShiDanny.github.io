@@ -3,6 +3,7 @@ export default {
   nav: {
     home: "Home",
     projects: "Projects",
+    lume: "Lume",
     about: "About",
     contact: "Contact"
   },

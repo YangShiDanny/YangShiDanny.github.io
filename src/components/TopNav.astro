@@ -26,6 +26,11 @@ const { is404 = false } = Astro.props;
       >{t.nav.projects}</a>
 
       <a
+        href={locale === 'en' ? '/lume' : '/zh/lume'}
+        class:list={['topnav-link', { active: path === '/lume' || path === '/zh/lume' }]}
+      >{t.nav.lume}</a>
+
+      <a
         href={locale === 'en' ? '/about' : '/zh/about'}
         class:list={['topnav-link', { active: path === '/about' || path === '/zh/about' }]}
       >{t.nav.about}</a>

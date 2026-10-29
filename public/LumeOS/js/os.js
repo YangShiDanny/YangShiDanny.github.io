@@ -557,7 +557,17 @@
 
   /* ---- 控制中心 ---- */
   let lumBrightness = 1, lumVolume = 0.6;
-  function applyBrightness() { root.style.setProperty('--lum-bright', String(lumBrightness)); }
+  /* 亮度用一个覆盖层压暗，而不是给 .desktop 加 filter ——
+     那会和开机动画自己的 blur 过渡抢同一个属性。 */
+  function applyBrightness() {
+    root.style.setProperty('--lum-bright', String(lumBrightness));
+    const dim = document.getElementById('dim');
+    if (dim) dim.style.opacity = String(Math.max(0, Math.min(0.72, 1 - lumBrightness)));
+  }
+  function syncCcTheme() {
+    const b = document.querySelector('#cc-panel [data-cc="theme"]');
+    if (b) b.textContent = root.dataset.theme === 'light' ? 'Light' : 'Dark';
+  }
   function wireControlCenter() {
     const panel = $('#cc-panel');
     if (!panel) return;
@@ -566,11 +576,18 @@
     const themeBtn = panel.querySelector('[data-cc="theme"]');
     const wifi = panel.querySelector('[data-cc="wifi"]');
     const bt = panel.querySelector('[data-cc="bt"]');
+    const settingsBtn = panel.querySelector('[data-cc="settings"]');
     if (bright) bright.addEventListener('input', () => { lumBrightness = Number(bright.value) / 100; applyBrightness(); });
     if (vol) vol.addEventListener('input', () => { lumVolume = Number(vol.value) / 100; });
     if (themeBtn) themeBtn.addEventListener('click', () => setTheme(root.dataset.theme === 'light' ? 'dark' : 'light'));
     if (wifi) wifi.addEventListener('click', () => wifi.classList.toggle('on'));
     if (bt) bt.addEventListener('click', () => bt.classList.toggle('on'));
+    if (settingsBtn) settingsBtn.addEventListener('click', () => {
+      if (panel) panel.hidden = true;
+      openApp('settings');
+    });
+    window.addEventListener('themechange', syncCcTheme);
+    syncCcTheme();
   }
   function wireMenubarExtras() {
     const bell = $('#bell');
@@ -598,6 +615,9 @@
 
   /* ---- 屏保 ---- */
   let idleTimer = null;
+  /* 空闲阈值（毫秒，0 = 从不自动进入屏保）。
+     设置应用可以改它，改完立刻写入 localStorage 并重排计时。 */
+  let idleLimit = 90000;
   function showScreensaver() {
     const sv = $('#screensaver');
     if (!sv) return;
@@ -627,8 +647,14 @@
     const sv = $('#screensaver');
     if (sv && !sv.hidden) { sv.hidden = true; sv.classList.remove('on'); cancelAnimationFrame(sv._raf || 0); clearTimeout(sv._ct); }
     if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(showScreensaver, 90000);
+    idleTimer = idleLimit > 0 ? setTimeout(showScreensaver, idleLimit) : null;
   }
+  function setIdleLimit(ms) {
+    idleLimit = Math.max(0, Number(ms) || 0);
+    try { localStorage.setItem('lume.idle', String(idleLimit)); } catch (e) {}
+    resetIdle();
+  }
+  function getIdleLimit() { return idleLimit; }
 
   /* ---- 首次启动导览 ---- */
   function startTour() {
@@ -727,11 +753,28 @@
       });
     }
     ['pointermove', 'pointerdown', 'keydown', 'wheel'].forEach((ev) => window.addEventListener(ev, resetIdle, { passive: true }));
+    /* 上次在设置里选的屏保延迟（没存过就沿用默认 90s） */
+    try {
+      const saved = localStorage.getItem('lume.idle');
+      if (saved !== null && Number.isFinite(Number(saved))) idleLimit = Math.max(0, Number(saved));
+    } catch (e) {}
     resetIdle();
     loadPlugins();
     try {
       const isLocal = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
       if (!isLocal && sessionStorage.getItem('lume.tour') !== '1') startTour();
+    } catch (e) {}
+    /* 深链：?open=settings 开机后直接把某个应用拉起来（方便分享与调试）。
+       开机序列还没走完就先等一等，别让窗口开在 boot 遮罩底下。 */
+    try {
+      const want = new URLSearchParams(location.search).get('open');
+      if (want && APPS[want]) {
+        const wait = (n) => {
+          if (el.desktop.classList.contains('awake') || n > 60) openApp(want);
+          else setTimeout(() => wait(n + 1), 120);
+        };
+        wait(0);
+      }
     } catch (e) {}
   }
 
@@ -1224,6 +1267,7 @@
       sub: `lume 1.0 · ${wins.size} window${wins.size === 1 ? '' : 's'}`,
       items: [
         { ico: 'newfile', label: 'New File', hint: '⌘⇧N', run: () => newItem(LumeFS.DESKTOP, 'file') },
+        { ico: 'newfile', label: 'New Python File', run: () => newItem(LumeFS.DESKTOP, 'file', 'untitled.py') },
         { ico: 'newfolder', label: 'New Folder', run: () => newItem(LumeFS.DESKTOP, 'dir') },
         '|',
         { ico: 'search', label: 'Spotlight…', hint: '⌘K', run: openSpot },
@@ -1271,8 +1315,8 @@
   /* -------------------------------------------------------- */
   /*  文件操作：桌面和 Files 共用同一套                          */
   /* -------------------------------------------------------- */
-  function newItem(dir, kind) {
-    const base = kind === 'dir' ? 'untitled folder' : 'untitled.txt';
+  function newItem(dir, kind, name) {
+    const base = name || (kind === 'dir' ? 'untitled folder' : 'untitled.txt');
     const path = LumeFS.unique(dir, base);
     const ok = kind === 'dir' ? LumeFS.mkdir(path) : LumeFS.write(path, '');
     if (!ok) {
@@ -1368,14 +1412,21 @@
     const isDir = btn.dataset.type === 'dir';
     const items = [
       { ico: isDir ? 'files' : 'editor', label: 'Open', run: () => openPath(path, btn.dataset.type) },
-      { ico: 'files', label: 'Show in Files', run: () => openApp('files', { path: LumeFS.parentOf(path) }) },
-      '|',
-      {
-        ico: 'rename',
-        label: 'Rename…',
-        run: () => inlineRename(btn.querySelector('span'), path, () => buildDeskIcons())
-      }
+      { ico: 'files', label: 'Show in Files', run: () => openApp('files', { path: LumeFS.parentOf(path) }) }
     ];
+    /* 目录多给一条「就在这里开终端」——比「先开终端再 cd」少两步 */
+    if (isDir) {
+      items.push({
+        ico: 'terminal',
+        label: 'Open Terminal Here',
+        run: () => openApp('terminal', { cwd: path, path: path })
+      });
+    }
+    items.push('|', {
+      ico: 'rename',
+      label: 'Rename…',
+      run: () => inlineRename(btn.querySelector('span'), path, () => buildDeskIcons())
+    });
     if (!isDir) items.push({ ico: 'duplicate', label: 'Duplicate', run: () => duplicateItem(path) });
     items.push('|', { ico: 'trash', label: 'Move to Trash', danger: true, run: () => deleteItem(path) });
 
@@ -2148,13 +2199,42 @@
       return out;
     }
 
+    /* getClientRects() 会把同一行里被行内元素（span / a / b / code …）切开的
+       选区拆成好几个矩形。直接画就会在同一行叠出两块 .sel-box，看起来像
+       "这一行被选中了两次"。这里把垂直方向重叠超过半行高的矩形合并成一块，
+       行的划分保持不变（相邻两行的矩形只有贴边、不重叠，不会被误并）。 */
+    function mergeLines(list) {
+      if (list.length < 2) return list;
+      const sorted = list.slice().sort((a, b) => (a.top - b.top) || (a.left - b.left));
+      const out = [];
+      for (const r of sorted) {
+        const p = out[out.length - 1];
+        if (p) {
+          const pB = p.top + p.height, rB = r.top + r.height;
+          const vOverlap = Math.min(pB, rB) - Math.max(p.top, r.top);
+          const sameLine = vOverlap > Math.min(p.height, r.height) * 0.5;
+          if (sameLine) {
+            const l = Math.min(p.left, r.left);
+            const rr = Math.max(p.left + p.width, r.left + r.width);
+            const t = Math.min(p.top, r.top);
+            const b = Math.max(pB, rB);
+            p.left = l; p.top = t; p.width = rr - l; p.height = b - t;
+            continue;
+          }
+        }
+        out.push({ left: r.left, top: r.top, width: r.width, height: r.height });
+      }
+      return out;
+    }
+
     /* 当前选区的矩形列表 */
     function rects() {
       if (field) return measureField(field);
       if (!range) return [];
-      return Array.from(range.getClientRects())
+      const list = Array.from(range.getClientRects())
         .filter((r) => r.width > 0.5 && r.height > 0.5)
         .map((r) => ({ left: r.left, top: r.top, width: r.width, height: r.height }));
+      return mergeLines(list);
     }
 
     /* 两块选区矩形是不是"贴着"的（下面那块顶着上面那块，且横向有交集）。
@@ -2915,6 +2995,11 @@
     setTheme: setTheme,
     setWall: setWall,
     setAccent: setAccent,
+    /* 设置应用要用：屏保空闲时长 + 重播导览 */
+    setIdleLimit: setIdleLimit,
+    getIdleLimit: getIdleLimit,
+    replayTour: startTour,
+    screensaver: showScreensaver,
     /* 关机：Terminal 的 `shutdown` 和 Dock 电源键共用同一入口 */
     shutdown: powerOff,
     systemInfo: systemInfo,

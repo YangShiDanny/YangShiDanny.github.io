@@ -70,7 +70,7 @@ const TerminalApp = {
   width: 700,
   height: 420,
 
-  mount(body) {
+  mount(body, win, opts = {}) {
     body.innerHTML = `
       <div class="term">
         <div class="term-out" tabindex="-1"></div>
@@ -85,7 +85,8 @@ const TerminalApp = {
     const input = body.querySelector('.term-input');
     const psPath = body.querySelector('.term-ps .path');
 
-    let cwd = LumeFS.HOME;
+    /* 右键「Open Terminal Here」传进来的目录；不存在就退回 ~ */
+    let cwd = opts.cwd && LumeFS.isDir(opts.cwd) ? LumeFS.norm(opts.cwd) : LumeFS.HOME;
     const history = [];
     let histIdx = 0;
     /* py setup 正在下载时置位，防止用户连按回车开好几个 6.4MB 的请求 */
@@ -110,6 +111,17 @@ const TerminalApp = {
     const syncPrompt = () => {
       psPath.textContent = promptPath();
     };
+
+    /* openApp 复用同一个 key 的窗口时会调这个，把新目录喂进来 */
+    if (win) {
+      win.navigate = (p) => {
+        const dest = LumeFS.norm(p);
+        if (!LumeFS.isDir(dest) || dest === cwd) return;
+        cwd = dest;
+        syncPrompt();
+        print(`<span class="dim">→ ${esc(promptPath())}</span>`);
+      };
+    }
 
     const scroll = () => {
       out.scrollTop = out.scrollHeight;
@@ -1394,6 +1406,13 @@ const TerminalApp = {
       });
     });
 
+    /* 提示符里的路径是写死在标记里的 ~，右键从别的目录进来时要刷一次 */
+    syncPrompt();
+    /* 从右键「Open Terminal Here」进来的窗口，标题带上目录名，
+       同时开几个终端时一眼能分清谁是谁 */
+    if (win && win.setTitle && cwd !== LumeFS.HOME) {
+      win.setTitle('Terminal — ' + LumeFS.baseOf(cwd));
+    }
     greet();
     setTimeout(() => input.focus(), 60);
   }
@@ -1590,7 +1609,15 @@ const FilesApp = {
           run: () => window.LumeOS.inlineRename(row.querySelector('.name'), path, render)
         }
       ];
-      if (!isDir) items.push({ ico: 'duplicate', label: 'Duplicate', run: () => window.LumeOS.duplicate(path) });
+      if (isDir) {
+        items.push({
+          ico: 'terminal',
+          label: 'Open Terminal Here',
+          run: () => window.LumeOS.openApp('terminal', { cwd: path, path: path })
+        });
+      } else {
+        items.push({ ico: 'duplicate', label: 'Duplicate', run: () => window.LumeOS.duplicate(path) });
+      }
       items.push('|', {
         ico: 'trash',
         label: 'Move to Trash',
@@ -1615,8 +1642,14 @@ const FilesApp = {
         sub: 'lume-fs · ' + cwd(),
         items: [
           { ico: 'newfile', label: 'New File', hint: '⌘⇧N', run: () => window.LumeOS.newItem(cwd(), 'file') },
+          { ico: 'newfile', label: 'New Python File', run: () => window.LumeOS.newItem(cwd(), 'file', 'untitled.py') },
           { ico: 'newfolder', label: 'New Folder', run: () => window.LumeOS.newItem(cwd(), 'dir') },
           '|',
+          {
+            ico: 'terminal',
+            label: 'Open Terminal Here',
+            run: () => window.LumeOS.openApp('terminal', { cwd: cwd(), path: cwd() })
+          },
           { ico: 'refresh', label: 'Refresh', run: render },
           {
             ico: 'up',
@@ -1721,18 +1754,23 @@ const EditorApp = {
       const i = base.lastIndexOf('.');
       return i > 0 ? base.slice(i + 1).toLowerCase() : '';
     };
-    const KIND = { lume: 'lume', md: 'doc', markdown: 'doc' };
+    const KIND = { lume: 'lume', md: 'doc', markdown: 'doc', py: 'py', pyw: 'py' };
 
     const ext = path ? extOf(path) : '';
     const isLume = ext === 'lume';
+    const isPy = ext === 'py' || ext === 'pyw';
     const isMd = !!(window.LumeMarkdown && (LumeMarkdown.isMarkdown(path) || window.LumeMarkdown.isMarkdown('.' + ext)));
-    /* .lume 走 Lume 高亮，.md 走 Markdown 高亮，都是「pre 上色 + textarea 透明」双图层 */
-    const syntax = !!(path && window.LumeHighlight && LumeHighlight.isLume(path)) || isMd;
+    /* .lume / .py / .md 都走「pre 上色 + textarea 透明」双图层 */
+    const syntax = !!(path && window.LumeHighlight && (LumeHighlight.isLume(path) || LumeHighlight.isPython(path))) || isMd;
     let previewing = false;
 
     const paint = () => {
       if (!syntax) return;
-      codeEl.innerHTML = isMd && window.LumeMarkdown ? LumeMarkdown.render(area.value) : LumeHighlight.render(area.value);
+      codeEl.innerHTML = isMd && window.LumeMarkdown
+        ? LumeMarkdown.render(area.value)
+        : isPy
+          ? LumeHighlight.renderPython(area.value)
+          : LumeHighlight.render(area.value);
       codeBox.scrollTop = area.scrollTop;
       codeBox.scrollLeft = area.scrollLeft;
     };
@@ -1782,7 +1820,7 @@ const EditorApp = {
       langTag.textContent = ext.toUpperCase();
       langTag.dataset.kind = KIND[ext] || 'text';
     }
-    runBtn.hidden = !isLume;
+    runBtn.hidden = !(isLume || isPy);
     previewBtn.hidden = !isMd;
 
     const save = () => {
@@ -1796,8 +1834,68 @@ const EditorApp = {
       window.LumeOS.toast('Saved ' + LumeFS.baseOf(path));
     };
 
-    /* 在编辑器里直接跑：和终端 lume run 是同一个 VM */
+    /* Python 的 stdout/stderr 是分片回传的，逐段往 <pre> 里追加，
+       不走「拼一整段 innerHTML」那条路 —— 跑长脚本时能边跑边看。 */
+    let pyBusy = false;
+    const pyAppend = (text, cls) => {
+      const frag = document.createDocumentFragment();
+      String(text).split('\n').forEach((line, i, arr) => {
+        if (i === arr.length - 1 && line === '') return;
+        const span = document.createElement('span');
+        span.className = cls ? 'line ' + cls : 'line';
+        span.textContent = line;
+        frag.appendChild(span);
+        frag.appendChild(document.createTextNode('\n'));
+      });
+      outBody.appendChild(frag);
+      outBody.scrollTop = outBody.scrollHeight;
+    };
+
+    /* .py 的 Run：跟终端 `py run` 共用同一个 worker 运行时 */
+    const runPython = () => {
+      if (!window.LumePy) {
+        outPanel.hidden = false;
+        outBody.innerHTML = '<span class="err">python runtime module not loaded</span>';
+        outMeta.textContent = 'error';
+        return;
+      }
+      if (pyBusy) {
+        window.LumeOS.toast('Python is still running — wait, or press ^C in the terminal');
+        return;
+      }
+      pyBusy = true;
+      outPanel.hidden = false;
+      outBody.innerHTML = '';
+      outMeta.textContent = 'starting python…';
+      const t0 = performance.now();
+
+      window.LumePy
+        .run(area.value, {
+          log: (s) => { outMeta.textContent = s; },
+          out: (s) => pyAppend(s, ''),
+          err: (s) => pyAppend(s, 'err')
+        })
+        .then((r) => {
+          if (r.value) pyAppend('=> ' + r.value, 'dim');
+          const ms = r.ms != null ? r.ms : Math.round(performance.now() - t0);
+          outMeta.textContent = 'done · ' + ms + ' ms';
+        })
+        .catch((e) => {
+          if (e && e.interrupted) { outMeta.textContent = 'interrupted'; return; }
+          const lines = String((e && e.message) || e).split('\n').filter((l) => l.trim());
+          /* traceback 有用的信息在最后，倒着最多给 12 行 */
+          lines.slice(-12).forEach((l) => pyAppend(l, 'err'));
+          outMeta.textContent = 'error';
+        })
+        .finally(() => { pyBusy = false; });
+    };
+
+    /* 在编辑器里直接跑：lume 走浏览器 VM，py 走 worker 里的 CPython */
     const run = () => {
+      if (isPy) {
+        runPython();
+        return;
+      }
       if (!isLume || !window.LumeVM) return;
       const name = path ? LumeFS.baseOf(path) : 'untitled.lume';
       const t0 = performance.now();
@@ -1872,7 +1970,7 @@ const EditorApp = {
         });
         items.push('|');
       }
-      if (isLume) items.push({ ico: 'run', label: 'Run File', hint: '⌘⏎', run: run });
+      if (isLume || isPy) items.push({ ico: 'run', label: 'Run File', hint: '⌘⏎', run: run });
       items.push({ ico: 'save', label: 'Save', hint: '⌘S', run: save });
       items.push('|');
       items.push({ ico: 'cut', label: 'Cut', hint: '⌘X', run: exec('cut') });
@@ -1891,7 +1989,7 @@ const EditorApp = {
 
       OS.popMenu(e.clientX, e.clientY, {
         title: path ? LumeFS.baseOf(path) : 'untitled',
-        sub: isLume ? 'lume source' : area.value.trim() ? 'text' : 'empty buffer',
+        sub: isLume ? 'lume source' : isPy ? 'python source' : area.value.trim() ? 'text' : 'empty buffer',
         items: items
       });
     });
@@ -1903,9 +2001,13 @@ const EditorApp = {
       outPanel.hidden = true;
     });
 
-    /* 自动缩进 / 括号配对 / 关键字补全（.lume 才启用代码行为） */
+    /* 自动缩进 / 括号配对 / 关键字补全（lume 与 python 才启用代码行为） */
     if (window.LumeEdit) {
-      LumeEdit.attach({ area, wrap, lang: isLume ? 'lume' : isMd ? 'md' : 'text' });
+      LumeEdit.attach({
+        area: area,
+        wrap: wrap,
+        lang: isLume ? 'lume' : isPy ? 'python' : isMd ? 'md' : 'text'
+      });
     }
 
     sync();
@@ -1921,107 +2023,368 @@ const SettingsApp = {
   id: 'settings',
   name: 'Settings',
   icon: 'settings',
-  width: 580,
-  height: 470,
+  width: 780,
+  height: 560,
 
   mount(body) {
-    const OS = window.LumeOS;
+    const OS = window.LumeOS || {};
+    const info = OS.systemInfo ? OS.systemInfo() : {};
+
+    /* ---------- 数据表：全部写在上面，HTML 只负责摆 ---------- */
+    const ACCENTS = [
+      ['#33aaff', 'Azure'], ['#a78bfa', 'Violet'], ['#34d399', 'Mint'],
+      ['#f472b6', 'Rose'], ['#fbbf24', 'Amber'], ['#ff7a45', 'Ember']
+    ];
+    const IDLES = [[30000, '30 s'], [90000, '90 s'], [300000, '5 min'], [0, 'Never']];
+
+    const fmt = (b) => (b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(2) + ' MB');
+
+    /* 文件系统用量：递归数一遍 HOME，内容长度按字符算（够用来给个量级） */
+    const fsStats = () => {
+      let files = 0, bytes = 0;
+      const walk = (dir) => {
+        try {
+          LumeFS.list(dir).forEach((f) => {
+            if (f.type === 'dir') walk(f.path);
+            else { files += 1; bytes += (LumeFS.read(f.path) || '').length; }
+          });
+        } catch (e) {}
+      };
+      walk(LumeFS.HOME);
+      return { files: files, bytes: bytes };
+    };
+    /* localStorage 全量：key + value 各按 2 字节/字符估（UTF-16） */
+    const storeBytes = () => {
+      let n = 0;
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i) || '';
+          n += (k.length + (localStorage.getItem(k) || '').length) * 2;
+        }
+      } catch (e) {}
+      return n;
+    };
+
+    /* ---------- 线性图标：统一 24 格、1.6 描边，跟菜单栏一套 ---------- */
+    const I = {
+      look: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 3.8a8.2 8.2 0 0 0 0 16.4Z" fill="currentColor" stroke="none"/></svg>',
+      input: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><rect x="2.6" y="6" width="18.8" height="12" rx="2.6"/><path d="M7 10.4h.01M10.4 10.4h.01M13.8 10.4h.01M17.2 10.4h.01M8 14.2h8"/></svg>',
+      system: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M12 2.6v2M12 19.4v2M2.6 12h2M19.4 12h2M5.4 5.4l1.4 1.4M17.2 17.2l1.4 1.4M18.6 5.4l-1.4 1.4M6.8 17.2l-1.4 1.4"/></svg>',
+      about: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.6"/><path d="M12 11.2v5.4"/><circle cx="12" cy="7.9" r="1.05" fill="currentColor" stroke="none"/></svg>'
+    };
+
+    const tabs = [
+      ['look', I.look, 'Look &amp; Feel'],
+      ['input', I.input, 'Input'],
+      ['system', I.system, 'System'],
+      ['about', I.about, 'About']
+    ].map((t, i) =>
+      '<button class="set-tab' + (i === 0 ? ' on' : '') + '" data-tab="' + t[0] + '" type="button" role="tab">' +
+        t[1] + '<span>' + t[2] + '</span></button>'
+    ).join('');
 
     body.innerHTML = `
-      <div class="settings">
-        <section class="set-group">
-          <p class="set-label">Appearance</p>
-          <div class="set-row">
-            <div><span class="name">Theme</span><span class="desc">Dark by default, light when the sun is up.</span></div>
-            <div class="seg" data-set="theme">
-              <button data-v="dark">Dark</button><button data-v="light">Light</button>
-            </div>
+      <div class="settings2">
+        <aside class="set-rail">
+          <div class="set-brand">
+            <span class="set-mark" aria-hidden="true"></span>
+            <div><b>Settings</b><small>LumeOS 1.0</small></div>
           </div>
-          <div class="set-row">
-            <div><span class="name">Accent</span><span class="desc">Used by the terminal, dock and highlights.</span></div>
-            <div class="swatches" data-set="accent">
-              <button class="swatch" data-v="#33aaff" style="background:#33aaff" aria-label="Blue"></button>
-              <button class="swatch" data-v="#a78bfa" style="background:#a78bfa" aria-label="Violet"></button>
-              <button class="swatch" data-v="#34d399" style="background:#34d399" aria-label="Green"></button>
-              <button class="swatch" data-v="#f472b6" style="background:#f472b6" aria-label="Pink"></button>
-              <button class="swatch" data-v="#fbbf24" style="background:#fbbf24" aria-label="Amber"></button>
-            </div>
-          </div>
-          <div class="set-row">
-            <div><span class="name">Wallpaper</span><span class="desc">Sixty lines of canvas drawing stars.</span></div>
-            <div class="seg" data-set="wall">
-              <button data-v="stars">Stars</button><button data-v="grid">Grid</button><button data-v="plain">Plain</button>
-            </div>
-          </div>
-        </section>
+          <nav class="set-nav" role="tablist">${tabs}</nav>
+          <div class="set-rail-foot"><span>1.0</span><i aria-hidden="true"></i><span>nebula</span></div>
+        </aside>
 
-        <section class="set-group">
-          <p class="set-label">System</p>
-          <div class="set-row">
-            <div><span class="name">Chinese IME</span><span class="desc">Type pinyin in any text field. Tap Shift alone to switch 中 / EN.</span></div>
-            <div class="seg" data-set="ime">
-              <button data-v="cn">中</button><button data-v="en">EN</button><button data-v="off">Off</button>
-            </div>
+        <div class="set-main">
+          <div class="set-scroll">
+
+            <section class="set-pane on" data-pane="look">
+              <header class="set-head">
+                <h2>Look &amp; Feel</h2>
+                <p>Every change lands the instant you pick it — there is no Save button in this system.</p>
+              </header>
+
+              <div class="set-block">
+                <p class="set-cap">Theme</p>
+                <div class="pick-row" data-set="theme">
+                  <button class="pick" data-v="dark" type="button">
+                    <span class="pick-art pa-dark"><i class="pa-bar"></i><i class="pa-win"></i><i class="pa-dock"></i></span>
+                    <span class="pick-meta"><b>Dark</b><small>Pure black, mono labels</small></span>
+                  </button>
+                  <button class="pick" data-v="light" type="button">
+                    <span class="pick-art pa-light"><i class="pa-bar"></i><i class="pa-win"></i><i class="pa-dock"></i></span>
+                    <span class="pick-meta"><b>Light</b><small>Paper white, same bones</small></span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="set-block">
+                <p class="set-cap">Accent</p>
+                <div class="sw-row" data-set="accent">
+                  ${ACCENTS.map(([c, n]) =>
+                    '<button class="sw" data-v="' + c + '" style="--c:' + c + '" type="button" title="' + n + '" aria-label="' + n + '"></button>'
+                  ).join('')}
+                </div>
+                <p class="set-hint">Drives the terminal cursor, dock dots, text selection and syntax keywords.</p>
+              </div>
+
+              <div class="set-block">
+                <p class="set-cap">Wallpaper</p>
+                <div class="pick-row" data-set="wall">
+                  <button class="pick" data-v="stars" type="button">
+                    <span class="pick-art pa-wall pa-stars"></span>
+                    <span class="pick-meta"><b>Stars</b><small>Drifting canvas dust</small></span>
+                  </button>
+                  <button class="pick" data-v="grid" type="button">
+                    <span class="pick-art pa-wall pa-grid"></span>
+                    <span class="pick-meta"><b>Grid</b><small>Blueprint lines</small></span>
+                  </button>
+                  <button class="pick" data-v="plain" type="button">
+                    <span class="pick-art pa-wall pa-plain"></span>
+                    <span class="pick-meta"><b>Plain</b><small>Nothing at all</small></span>
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="set-pane" data-pane="input">
+              <header class="set-head">
+                <h2>Input</h2>
+                <p>The pinyin engine runs inside this tab. No IME service, no network.</p>
+              </header>
+
+              <div class="set-block">
+                <p class="set-cap">Chinese IME</p>
+                <div class="set-card">
+                  <div class="set-row">
+                    <div class="set-row-txt">
+                      <b>Active layout</b>
+                      <small>Tap Shift on its own to flip 中 / EN without opening this panel.</small>
+                    </div>
+                    <div class="seg" data-set="ime">
+                      <button data-v="cn" type="button">中</button>
+                      <button data-v="en" type="button">EN</button>
+                      <button data-v="off" type="button">Off</button>
+                    </div>
+                  </div>
+                  <div class="set-row">
+                    <div class="set-row-txt">
+                      <b>Dictionary</b>
+                      <small>Full pinyin, 简拼 abbreviations and sentence-level segmentation.</small>
+                    </div>
+                    <span class="set-pill" id="set-ime-state">—</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="set-block">
+                <p class="set-cap">Keys</p>
+                <div class="key-list">
+                  <div class="key-row"><kbd>Shift</kbd><span>Swap 中 / EN</span></div>
+                  <div class="key-row"><kbd>⌘K</kbd><span>Spotlight — apps, files, commands</span></div>
+                  <div class="key-row"><kbd>⌘⇧L</kbd><span>Lock the screen</span></div>
+                  <div class="key-row"><kbd>⌘S</kbd><span>Save the file you are editing</span></div>
+                  <div class="key-row"><kbd>⌘↵</kbd><span>Run the current .lume file</span></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="set-pane" data-pane="system">
+              <header class="set-head">
+                <h2>System</h2>
+                <p>Idle behaviour, notifications, and the switch you should read twice.</p>
+              </header>
+
+              <div class="set-block">
+                <p class="set-cap">Screensaver</p>
+                <div class="set-card">
+                  <div class="set-row">
+                    <div class="set-row-txt">
+                      <b>Enter after</b>
+                      <small>Stars drift in once nothing moves. Any pointer or key wakes it.</small>
+                    </div>
+                    <div class="seg" data-set="idle">
+                      ${IDLES.map(([ms, n]) => '<button data-v="' + ms + '" type="button">' + n + '</button>').join('')}
+                    </div>
+                  </div>
+                  <div class="set-row">
+                    <div class="set-row-txt">
+                      <b>Preview</b>
+                      <small>See it now instead of waiting out the timer.</small>
+                    </div>
+                    <button class="set-btn" data-act="screensaver" type="button">Run now</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="set-block">
+                <p class="set-cap">Notifications</p>
+                <div class="set-card">
+                  <div class="set-row">
+                    <div class="set-row-txt">
+                      <b>Send a test</b>
+                      <small>Lands under the bell at the top right, plus a toast.</small>
+                    </div>
+                    <button class="set-btn" data-act="notify" type="button">Notify me</button>
+                  </div>
+                  <div class="set-row">
+                    <div class="set-row-txt">
+                      <b>Walking tour</b>
+                      <small>Four stops around the desktop, normally shown once per session.</small>
+                    </div>
+                    <button class="set-btn" data-act="tour" type="button">Replay</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="set-block">
+                <p class="set-cap">Danger zone</p>
+                <div class="set-card danger">
+                  <div class="set-row">
+                    <div class="set-row-txt">
+                      <b>Reset everything</b>
+                      <small>Files, theme, accent, IME and preferences. The tab reloads.</small>
+                    </div>
+                    <button class="set-btn danger" data-act="reset" type="button">Wipe</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="set-pane" data-pane="about">
+              <header class="set-head">
+                <h2>About</h2>
+                <p>What this machine pretends to be, and how much room it is using.</p>
+              </header>
+
+              <div class="set-hero">
+                <div class="set-hero-mark" aria-hidden="true">L</div>
+                <div class="set-hero-txt">
+                  <b>LumeOS 1.0</b>
+                  <span>nebula · ${esc(info.wm || 'vanilla')} window manager</span>
+                </div>
+                <button class="set-btn" data-act="about" type="button">Open About</button>
+              </div>
+
+              <div class="spec-grid">
+                ${[
+                  ['Kernel', info.kernel], ['Build', info.build],
+                  ['Uptime', info.uptime], ['Apps', (info.apps || 0) + ' installed'],
+                  ['Memory', info.memory], ['Theme', info.theme],
+                  ['Engine', info.engine], ['Cache', info.cache]
+                ].map(([k, v]) =>
+                  '<div class="spec"><span>' + k + '</span><b>' + esc(v == null || v === '' ? '—' : v) + '</b></div>'
+                ).join('')}
+              </div>
+
+              <div class="set-block">
+                <p class="set-cap">Storage</p>
+                <div class="set-card" id="set-storage"></div>
+              </div>
+            </section>
+
           </div>
-          <div class="set-row">
-            <div><span class="name">About this system</span><span class="desc">Who built this, and why.</span></div>
-            <div class="seg"><button data-act="about">Open</button></div>
-          </div>
-          <div class="set-row">
-            <div><span class="name">Reset everything</span><span class="desc">Wipe local files, theme and preferences.</span></div>
-            <div class="seg"><button data-act="reset">Reset</button></div>
-          </div>
-          <p class="set-note">Nothing here talks to a server. Everything you change lives in this browser's localStorage and disappears the moment you clear site data.</p>
-        </section>
+
+          <footer class="set-foot">
+            <span class="set-foot-dot" aria-hidden="true"></span>
+            Nothing here talks to a server · everything lives in this tab's localStorage and dies with the cache
+          </footer>
+        </div>
       </div>`;
 
+    const root = document.documentElement;
+    const q = (s) => body.querySelector(s);
+    const paint = (sel, on) => body.querySelectorAll(sel).forEach((b) => b.classList.toggle('on', on(b)));
+
     const sync = () => {
-      const root = document.documentElement;
       const theme = root.dataset.theme || 'dark';
       const wall = root.dataset.wall || 'stars';
-      const accent = getComputedStyle(root).getPropertyValue('--accent').trim();
-
-      body.querySelectorAll('[data-set="theme"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === theme));
-      body.querySelectorAll('[data-set="wall"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === wall));
-      body.querySelectorAll('[data-set="accent"] .swatch').forEach((b) => b.classList.toggle('on', b.dataset.v === accent));
-
+      const accent = (getComputedStyle(root).getPropertyValue('--accent') || '').trim().toLowerCase();
       const ime = window.LumeIME;
       const imeVal = !ime || !ime.on ? 'off' : ime.mode;
-      body.querySelectorAll('[data-set="ime"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === imeVal));
+      const idle = OS.getIdleLimit ? OS.getIdleLimit() : 90000;
+
+      paint('[data-set="theme"] [data-v]', (b) => b.dataset.v === theme);
+      paint('[data-set="wall"] [data-v]', (b) => b.dataset.v === wall);
+      paint('[data-set="accent"] [data-v]', (b) => b.dataset.v.toLowerCase() === accent);
+      paint('[data-set="ime"] [data-v]', (b) => b.dataset.v === imeVal);
+      paint('[data-set="idle"] [data-v]', (b) => Number(b.dataset.v) === idle);
+
+      const pill = q('#set-ime-state');
+      if (pill) pill.textContent = imeVal === 'off' ? 'off' : imeVal === 'cn' ? '中 · pinyin' : 'EN · pass-through';
+
+      const storage = q('#set-storage');
+      if (storage) {
+        const fs = fsStats(), total = storeBytes();
+        const pct = Math.min(100, (total / (5 * 1048576)) * 100);
+        storage.innerHTML =
+          '<div class="meter"><i style="width:' + (pct < 0.6 ? 0.6 : pct).toFixed(2) + '%"></i></div>' +
+          '<div class="meter-legend">' +
+            '<span><b>' + fs.files + '</b> files · ' + fmt(fs.bytes) + '</span>' +
+            '<span><b>' + fmt(total) + '</b> / ~5 MB localStorage</span>' +
+          '</div>';
+      }
     };
 
     body.addEventListener('click', (e) => {
-      const seg = e.target.closest('[data-set] button');
-      if (seg) {
-        const kind = seg.closest('[data-set]').dataset.set;
-        const v = seg.dataset.v;
+      /* 侧栏切页 */
+      const tab = e.target.closest('.set-tab');
+      if (tab) {
+        body.querySelectorAll('.set-tab').forEach((b) => b.classList.toggle('on', b === tab));
+        body.querySelectorAll('.set-pane').forEach((p) => {
+          const on = p.dataset.pane === tab.dataset.tab;
+          p.classList.toggle('on', on);
+          if (on) { p.classList.remove('in'); void p.offsetWidth; p.classList.add('in'); }
+        });
+        q('.set-scroll').scrollTop = 0;
+        return;
+      }
+
+      /* 所有选项：主题 / 强调色 / 壁纸 / 输入法 / 屏保延时的 data-v 都走这一条 */
+      const chip = e.target.closest('[data-set] [data-v]');
+      if (chip) {
+        const kind = chip.closest('[data-set]').dataset.set;
+        const v = chip.dataset.v;
         if (kind === 'theme') OS.setTheme(v);
-        if (kind === 'wall') OS.setWall(v);
-        if (kind === 'accent') OS.setAccent(v);
-        if (kind === 'ime' && window.LumeIME) {
+        else if (kind === 'wall') OS.setWall(v);
+        else if (kind === 'accent') OS.setAccent(v);
+        else if (kind === 'idle') OS.setIdleLimit(Number(v));
+        else if (kind === 'ime' && window.LumeIME) {
           if (v === 'off') window.LumeIME.setOn(false);
-          else {
-            window.LumeIME.setOn(true);
-            window.LumeIME.setMode(v);
-          }
+          else { window.LumeIME.setOn(true); window.LumeIME.setMode(v); }
         }
         sync();
         return;
       }
+
       const act = e.target.closest('[data-act]');
-      if (act) {
-        if (act.dataset.act === 'about') OS.openApp('about');
-        if (act.dataset.act === 'reset') {
-          if (confirm('Reset LumeOS? Local files, theme and preferences will be wiped.')) {
-            localStorage.clear();
-            location.reload();
-          }
-        }
+      if (!act) return;
+      const a = act.dataset.act;
+      if (a === 'about') OS.openApp && OS.openApp('about');
+      else if (a === 'notify' && OS.postNotification) {
+        OS.postNotification({ title: 'Test notification', body: 'If you can read this, the bell works.', app: 'Settings' });
+      } else if (a === 'tour' && OS.replayTour) OS.replayTour();
+      else if (a === 'screensaver' && OS.screensaver) OS.screensaver();
+      else if (a === 'reset') {
+        /* 不做原生 confirm：先按一次变成「再按一次」，三秒不动就自己撤回 */
+        if (act.dataset.armed === '1') { localStorage.clear(); location.reload(); return; }
+        act.dataset.armed = '1';
+        act.classList.add('armed');
+        act.textContent = 'Click again';
+        setTimeout(() => {
+          if (!act.isConnected) return;
+          act.dataset.armed = '';
+          act.classList.remove('armed');
+          act.textContent = 'Wipe';
+        }, 3000);
       }
     });
 
     window.addEventListener('themechange', sync);
     document.addEventListener('lume:ime', sync);
+    autoCleanup(body, () => {
+      window.removeEventListener('themechange', sync);
+      document.removeEventListener('lume:ime', sync);
+    });
     sync();
   }
 };
@@ -2775,14 +3138,23 @@ const SnakeApp = {
           <span class="game-score">Score: <b>0</b></span>
           <button class="game-btn" data-act="restart">Restart</button>
         </div>
-        <canvas class="game-canvas" width="340" height="340"></canvas>
+        <div class="game-board"><canvas class="game-canvas" width="340" height="340"></canvas></div>
         <div class="game-hint">Arrows / WASD · eat the green dot · don't bite yourself</div>
       </div>`;
     const cv = body.querySelector('.game-canvas');
+    const boardEl = body.querySelector('.game-board');
     const ctx = cv.getContext('2d');
     const scoreEl = body.querySelector('.game-score b');
-    const N = 17, S = 20;
-    let snake, dir, nextDir, food, score, alive, timer;
+    const N = 17;
+    let S = 20, snake, dir, nextDir, food, score, alive, timer;
+
+    const fit = () => {
+      const w = boardEl.clientWidth, h = boardEl.clientHeight;
+      if (!w || !h) return;
+      const size = Math.max(60, Math.min(w, h));
+      if (size === cv.width) { draw(); return; }
+      cv.width = cv.height = size; S = size / N; draw();
+    };
 
     const randFood = () => {
       let p;
@@ -2840,10 +3212,13 @@ const SnakeApp = {
     const guard = gameFocusGuard(body);
     const docKey = (e) => { if (!guard()) return; onKey(e); };
     document.addEventListener('keydown', docKey);
+    window.addEventListener('resize', fit);
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(boardEl);
     body.querySelector('[data-act="restart"]').addEventListener('click', reset);
-    reset();
+    reset(); fit();
     timer = setInterval(() => {
-      if (!body.isConnected) { clearInterval(timer); document.removeEventListener('keydown', docKey); return; }
+      if (!body.isConnected) { clearInterval(timer); document.removeEventListener('keydown', docKey); ro.disconnect(); return; }
       step();
     }, 120);
   }
@@ -2860,75 +3235,176 @@ const Game2048App = {
           <span class="game-score">Score: <b>0</b></span>
           <button class="game-btn" data-act="restart">Restart</button>
         </div>
-        <canvas class="game-canvas" width="340" height="340"></canvas>
+        <div class="game-board"><canvas class="game-canvas" width="340" height="340"></canvas></div>
         <div class="game-hint">Arrows / WASD to slide tiles</div>
       </div>`;
     const cv = body.querySelector('.game-canvas');
+    const boardEl = body.querySelector('.game-board');
     const ctx = cv.getContext('2d');
     const scoreEl = body.querySelector('.game-score b');
-    const N = 4, S = 85;
+    const N = 4;
+    let S = 85;
+
+    const fit = () => {
+      const w = boardEl.clientWidth, h = boardEl.clientHeight;
+      if (!w || !h) return;
+      const size = Math.max(60, Math.min(w, h));
+      if (size === cv.width) { draw(); return; }
+      cv.width = cv.height = size; S = size / N; draw();
+    };
     const COLORS = { 2: '#3a3f4b', 4: '#4a5568', 8: '#7c5cff', 16: '#a855f7', 32: '#db2777',
       64: '#e11d48', 128: '#f59e0b', 256: '#fbbf24', 512: '#34d399', 1024: '#22d3ee', 2048: '#22c55e' };
-    let grid, score;
+    let grid, score, anim = false, raf = 0;
 
     const roundRect = (x, y, w, h, r) => {
       ctx.beginPath();
       ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
       ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
     };
-    const draw = () => {
-      ctx.fillStyle = '#11131a'; ctx.fillRect(0, 0, cv.width, cv.height);
+
+    /* 画一块方块（c/r 是格坐标；scale 用于合并 / 新生时"弹"一下） */
+    const drawTile = (c, r, value, scale) => {
+      const size = (S - 12) * scale;
+      const cx = c * S + S / 2, cy = r * S + S / 2;
+      ctx.fillStyle = COLORS[value] || '#22c55e';
+      roundRect(cx - size / 2, cy - size / 2, size, size, 8 * scale); ctx.fill();
+      if (value) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold ' + Math.round((value < 100 ? 30 : value < 1000 ? 26 : 20) * scale) + 'px monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(String(value), cx, cy);
+      }
+    };
+
+    /* 空格底槽：只在盘面为 0 的位置画 */
+    const drawSlots = (g) => {
       for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
-        const v = grid[r][c], x = c * S, y = r * S;
-        ctx.fillStyle = v ? (COLORS[v] || '#22c55e') : '#1a1d27';
-        roundRect(x + 6, y + 6, S - 12, S - 12, 8); ctx.fill();
-        if (v) {
-          ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (v < 100 ? 30 : v < 1000 ? 26 : 20) + 'px monospace';
-          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.fillText(String(v), x + S / 2, y + S / 2);
+        if (!g[r][c]) {
+          ctx.fillStyle = '#1a1d27';
+          roundRect(c * S + 6, r * S + 6, S - 12, S - 12, 8); ctx.fill();
         }
       }
     };
+
+    /* 静态绘制。scaleMap: "r,c" -> 缩放，给被合并 / 新生的格子用 */
+    const draw = (scaleMap) => {
+      ctx.fillStyle = '#11131a'; ctx.fillRect(0, 0, cv.width, cv.height);
+      drawSlots(grid);
+      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+        const v = grid[r][c];
+        if (!v) continue;
+        const sc = scaleMap ? (scaleMap.get(r + ',' + c) || 1) : 1;
+        drawTile(c, r, v, sc);
+      }
+    };
+
     const addTile = () => {
       const empty = [];
       for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!grid[r][c]) empty.push([r, c]);
-      if (!empty.length) return;
+      if (!empty.length) return null;
       const [r, c] = empty[(Math.random() * empty.length) | 0];
       grid[r][c] = Math.random() < 0.9 ? 2 : 4;
+      return { r, c };
     };
-    const slide = (arr) => {
-      const a = arr.filter((v) => v); const res = [];
-      for (let i = 0; i < a.length; i++) {
-        if (a[i] === a[i + 1]) { res.push(a[i] * 2); score += a[i] * 2; i++; }
-        else res.push(a[i]);
-      }
-      while (res.length < N) res.push(0);
-      return res;
-    };
-    const move = (d) => {
-      let moved = false;
+
+    /* 把行/列切成"从移动方向起排"的格子序列 */
+    const linesFor = (d) => {
+      const lines = [];
       if (d === 'left' || d === 'right') {
         for (let r = 0; r < N; r++) {
-          let row = grid[r].slice();
-          if (d === 'right') row.reverse();
-          const before = row.join(',');
-          row = slide(row);
-          if (d === 'right') row.reverse();
-          if (row.join(',') !== before) moved = true;
-          grid[r] = row;
+          const line = [];
+          for (let i = 0; i < N; i++) line.push({ r, c: d === 'left' ? i : N - 1 - i });
+          lines.push(line);
         }
       } else {
         for (let c = 0; c < N; c++) {
-          let col = []; for (let r = 0; r < N; r++) col.push(grid[r][c]);
-          if (d === 'down') col.reverse();
-          const before = col.join(',');
-          col = slide(col);
-          if (d === 'down') col.reverse();
-          if (col.join(',') !== before) moved = true;
-          for (let r = 0; r < N; r++) grid[r][c] = col[r];
+          const line = [];
+          for (let i = 0; i < N; i++) line.push({ r: d === 'up' ? i : N - 1 - i, c });
+          lines.push(line);
         }
       }
-      if (moved) { addTile(); draw(); scoreEl.textContent = String(score); }
+      return lines;
+    };
+
+    /* 只计算不改 grid：目标盘面 + 每块方块的滑动轨迹 + 合并格 + 得分 */
+    const computeMove = (d) => {
+      const next = Array.from({ length: N }, () => Array(N).fill(0));
+      const anims = [], mergedCells = [];
+      let gained = 0, moved = false;
+      for (const line of linesFor(d)) {
+        const tiles = [];
+        for (const p of line) if (grid[p.r][p.c]) tiles.push({ value: grid[p.r][p.c], r: p.r, c: p.c });
+        let outIdx = 0;
+        for (let i = 0; i < tiles.length; i++) {
+          const t = tiles[i], nx = tiles[i + 1], to = line[outIdx];
+          anims.push({ value: t.value, fromR: t.r, fromC: t.c, toR: to.r, toC: to.c });
+          if (nx && nx.value === t.value) {
+            anims.push({ value: nx.value, fromR: nx.r, fromC: nx.c, toR: to.r, toC: to.c });
+            next[to.r][to.c] = t.value * 2;
+            gained += t.value * 2;
+            mergedCells.push({ r: to.r, c: to.c });
+            i++; /* 两块合成一块 */
+          } else {
+            next[to.r][to.c] = t.value;
+          }
+          outIdx++;
+        }
+      }
+      moved = mergedCells.length > 0 || anims.some((a) => a.fromR !== a.toR || a.fromC !== a.toC);
+      return { next, anims, mergedCells, gained, moved };
+    };
+
+    /* 滑动帧：按缓动把每块从 from 插值到 to（合并的两块一起滑到同一格） */
+    const renderSlide = (plan, e) => {
+      ctx.fillStyle = '#11131a'; ctx.fillRect(0, 0, cv.width, cv.height);
+      drawSlots(plan.next);
+      for (const a of plan.anims) {
+        const r = a.fromR + (a.toR - a.fromR) * e;
+        const c = a.fromC + (a.toC - a.fromC) * e;
+        drawTile(c, r, a.value, 1);
+      }
+    };
+
+    /* 合并 / 新生之后的"弹一下" */
+    const runPop = (keys) => {
+      if (!keys.length) return;
+      const dur = 150, t0 = performance.now();
+      const step = (now) => {
+        const t = Math.min(1, (now - t0) / dur);
+        const sc = t < 0.5 ? 1 + (t / 0.5) * 0.12 : 1.12 - ((t - 0.5) / 0.5) * 0.12;
+        const map = new Map();
+        for (const k of keys) map.set(k, sc);
+        draw(map);
+        if (t < 1) raf = requestAnimationFrame(step);
+        else draw();
+      };
+      raf = requestAnimationFrame(step);
+    };
+
+    const move = (d) => {
+      if (anim) return; /* 滑动这一拍里不吃新输入 */
+      const plan = computeMove(d);
+      if (!plan.moved) return;
+      anim = true;
+      score += plan.gained;
+      scoreEl.textContent = String(score);
+      cancelAnimationFrame(raf);
+
+      const dur = 130, t0 = performance.now();
+      const step = (now) => {
+        const t = Math.min(1, (now - t0) / dur);
+        const e = 1 - Math.pow(1 - t, 3); /* ease-out cubic */
+        renderSlide(plan, e);
+        if (t < 1) { raf = requestAnimationFrame(step); return; }
+        grid = plan.next;
+        anim = false;
+        const born = addTile();
+        const keys = plan.mergedCells.map((m) => m.r + ',' + m.c);
+        if (born) keys.push(born.r + ',' + born.c);
+        draw();
+        runPop(keys);
+      };
+      raf = requestAnimationFrame(step);
     };
     const onKey = (e) => {
       const k = e.key.toLowerCase();
@@ -2943,13 +3419,18 @@ const Game2048App = {
     const guard = gameFocusGuard(body);
     const docKey = (e) => { if (!guard()) return; onKey(e); };
     document.addEventListener('keydown', docKey);
-    body.querySelector('[data-act="restart"]').addEventListener('click', () => {
+    const reset = () => {
+      cancelAnimationFrame(raf); anim = false;
       grid = Array.from({ length: N }, () => Array(N).fill(0));
       score = 0; scoreEl.textContent = '0'; addTile(); addTile(); draw();
-    });
+    };
+    body.querySelector('[data-act="restart"]').addEventListener('click', reset);
     grid = Array.from({ length: N }, () => Array(N).fill(0));
-    score = 0; addTile(); addTile(); draw();
-    autoCleanup(body, () => document.removeEventListener('keydown', docKey));
+    score = 0; fit(); addTile(); addTile(); draw();
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(boardEl);
+    const cleanup = () => { document.removeEventListener('keydown', docKey); ro.disconnect(); };
+    autoCleanup(body, cleanup);
   }
 };
 
@@ -2964,23 +3445,43 @@ const MinesApp = {
           <span class="game-score">Mines: <b>40</b></span>
           <button class="game-btn" data-act="restart">New</button>
         </div>
-        <canvas class="game-canvas" width="340" height="340"></canvas>
+        <div class="game-board"><canvas class="game-canvas" width="340" height="340"></canvas></div>
         <div class="game-hint">Left-click reveal · Right-click flag</div>
       </div>`;
     const cv = body.querySelector('.game-canvas');
+    const boardEl = body.querySelector('.game-board');
     const ctx = cv.getContext('2d');
-    const N = 17, S = 20, MINES = 40;
-    let board, revealed, flagged, dead, cleared;
+    const N = 17, MINES = 40;
+    let S = 20, board, revealed, flagged, dead, cleared, minesPlaced;
+
+    const fit = () => {
+      const w = boardEl.clientWidth, h = boardEl.clientHeight;
+      if (!w || !h) return;
+      const size = Math.max(60, Math.min(w, h));
+      if (size === cv.width) { draw(); return; }
+      cv.width = cv.height = size; S = size / N; draw();
+    };
 
     const reset = () => {
       board = Array.from({ length: N }, () => Array(N).fill(0));
       revealed = Array.from({ length: N }, () => Array(N).fill(false));
       flagged = Array.from({ length: N }, () => Array(N).fill(false));
-      dead = false; cleared = false;
+      dead = false; cleared = false; minesPlaced = false;
+      draw();
+    };
+
+    /* 首次点击后才布雷，且保证点击格及其 8 邻格都不是雷，避免第一下就踩雷。 */
+    const placeMines = (sr, sc) => {
+      const safe = new Set();
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const rr = sr + dr, cc = sc + dc;
+        if (rr >= 0 && cc >= 0 && rr < N && cc < N) safe.add(rr * N + cc);
+      }
       let placed = 0;
       while (placed < MINES) {
         const r = (Math.random() * N) | 0, c = (Math.random() * N) | 0;
-        if (board[r][c] !== -1) { board[r][c] = -1; placed++; }
+        const idx = r * N + c;
+        if (board[r][c] !== -1 && !safe.has(idx)) { board[r][c] = -1; placed++; }
       }
       for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (board[r][c] !== -1) {
         let n = 0;
@@ -2990,7 +3491,7 @@ const MinesApp = {
         }
         board[r][c] = n;
       }
-      draw();
+      minesPlaced = true;
     };
     const draw = () => {
       ctx.fillStyle = '#11131a'; ctx.fillRect(0, 0, cv.width, cv.height);
@@ -3029,6 +3530,7 @@ const MinesApp = {
     };
     const reveal = (r, c) => {
       if (dead || cleared || flagged[r][c] || revealed[r][c]) return;
+      if (!minesPlaced) placeMines(r, c);
       if (board[r][c] === -1) { dead = true; revealed[r][c] = true; draw(); return; }
       flood(r, c); draw();
       let ok = true;
@@ -3037,7 +3539,8 @@ const MinesApp = {
     };
     const cell = (e) => {
       const rect = cv.getBoundingClientRect();
-      return [((e.clientX - rect.left) / S) | 0, ((e.clientY - rect.top) / S) | 0];
+      const sx = cv.width / rect.width, sy = cv.height / rect.height;
+      return [((e.clientX - rect.left) * sx / S) | 0, ((e.clientY - rect.top) * sy / S) | 0];
     };
     cv.addEventListener('click', (e) => {
       if (!body.isConnected) return;
@@ -3051,7 +3554,10 @@ const MinesApp = {
       if (r >= 0 && c >= 0 && r < N && c < N && !revealed[r][c]) { flagged[r][c] = !flagged[r][c]; draw(); }
     });
     body.querySelector('[data-act="restart"]').addEventListener('click', reset);
-    reset();
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(boardEl);
+    reset(); fit();
+    autoCleanup(body, () => ro.disconnect());
   }
 };
 
@@ -3062,10 +3568,18 @@ const ApiApp = {
     body.innerHTML = `
       <div class="api">
         <div class="api-row">
-          <select class="api-method">
-            <option>GET</option><option>POST</option><option>PUT</option>
-            <option>DELETE</option><option>PATCH</option>
-          </select>
+          <div class="api-dd">
+            <button class="api-dd-btn" type="button" aria-haspopup="listbox" aria-expanded="false">
+              <span class="api-dd-cur">GET</span><span class="api-dd-car">▾</span>
+            </button>
+            <div class="api-dd-list" role="listbox" hidden>
+              <button class="api-dd-opt is-on" type="button" role="option" data-m="GET">GET</button>
+              <button class="api-dd-opt" type="button" role="option" data-m="POST">POST</button>
+              <button class="api-dd-opt" type="button" role="option" data-m="PUT">PUT</button>
+              <button class="api-dd-opt" type="button" role="option" data-m="DELETE">DELETE</button>
+              <button class="api-dd-opt" type="button" role="option" data-m="PATCH">PATCH</button>
+            </div>
+          </div>
           <input class="api-url" type="text" spellcheck="false"
             placeholder="https://httpbin.org/get" value="https://httpbin.org/get" />
           <button class="api-send">Send</button>
@@ -3081,8 +3595,26 @@ const ApiApp = {
         <div class="api-note">浏览器的 CORS 会拦大部分跨域请求。试试 httpbin.org 或 jsonplaceholder.typicode.com。</div>
       </div>`;
     const $ = (s) => body.querySelector(s);
-    const methodEl = $('.api-method'), urlEl = $('.api-url'), headersEl = $('.api-headers'),
+    const urlEl = $('.api-url'), headersEl = $('.api-headers'),
       bodyEl = $('.api-body'), sendBtn = $('.api-send'), metaEl = $('.api-meta'), outEl = $('.api-out');
+
+    /* 自绘下拉：不用浏览器原生 <select>，换成跟系统同一套材质风格的浮层菜单 */
+    let method = 'GET';
+    const dd = $('.api-dd'), ddBtn = $('.api-dd-btn'), ddCur = $('.api-dd-cur'), ddList = $('.api-dd-list');
+    const closeDd = () => { ddList.hidden = true; dd.classList.remove('open'); ddBtn.setAttribute('aria-expanded', 'false'); };
+    const openDd = () => { ddList.hidden = false; dd.classList.add('open'); ddBtn.setAttribute('aria-expanded', 'true'); };
+    ddBtn.addEventListener('click', (e) => { e.stopPropagation(); if (ddList.hidden) openDd(); else closeDd(); });
+    ddList.addEventListener('click', (e) => {
+      const opt = e.target.closest('.api-dd-opt');
+      if (!opt) return;
+      method = opt.dataset.m;
+      ddCur.textContent = method;
+      ddList.querySelectorAll('.api-dd-opt').forEach((o) => o.classList.toggle('is-on', o === opt));
+      closeDd();
+    });
+    const outsideDd = (e) => { if (!e.target.closest('.api-dd')) closeDd(); };
+    document.addEventListener('click', outsideDd);
+    autoCleanup(body, () => document.removeEventListener('click', outsideDd));
 
     const send = async () => {
       const url = urlEl.value.trim();
@@ -3090,7 +3622,7 @@ const ApiApp = {
       let headers = {};
       try { headers = JSON.parse(headersEl.value || '{}'); }
       catch (err) { metaEl.textContent = 'Headers 不是合法 JSON'; return; }
-      const method = methodEl.value, bodyText = bodyEl.value;
+      const bodyText = bodyEl.value;
       metaEl.textContent = '请求中…'; outEl.textContent = '';
       const t0 = performance.now();
       try {

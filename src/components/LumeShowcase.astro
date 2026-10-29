@@ -274,8 +274,9 @@ const ops = [
   </div>
 </section>
 
-<!-- load the in-browser compiler, then wire up the playground -->
+<!-- in-browser compiler + editor feel (bracket pairing, autocomplete), then the playground -->
 <script is:inline src="/LumeOS/js/lume-vm.js"></script>
+<script is:inline src="/LumeOS/js/editor-plus.js"></script>
 <script is:inline src="/js/lume-playground.js"></script>
 
 <style>
@@ -306,22 +307,6 @@ const ops = [
   .pg-hl { pointer-events: none; color: var(--text); z-index: 1; }
   .pg-ta { background: transparent; color: transparent; caret-color: var(--accent, #6ea8fe); resize: none; z-index: 2; outline: none; }
   .pg-out { margin: 0; flex: 1; overflow: auto; padding: 16px; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--text); background: var(--panel); }
-  .pg-out .ln { display: block; white-space: pre; }
-
-  /* token colors */
-  .pg-hl .kw { color: #ff7b9c; }
-  .pg-hl .ty { color: #6ec3ff; }
-  .pg-hl .fn { color: #ffd479; }
-  .pg-hl .num { color: #c792ea; }
-  .pg-hl .str, .pg-hl .cmt { color: var(--muted); font-style: italic; }
-  .pg-hl .op { color: var(--faint); }
-  .pg-out .kw { color: #ff7b9c; }
-  .pg-out .ty { color: #6ec3ff; }
-  .pg-out .num { color: #c792ea; }
-  .pg-out .str, .pg-out .cmt { color: var(--muted); }
-  .pg-out .pre { color: #ffd479; }
-  .pg-out .err { color: #ff6b6b; }
-  .pg-out .dim { color: var(--faint); }
 
   /* ---------- Reference tables ---------- */
   .ref-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; }
@@ -356,4 +341,51 @@ const ops = [
     .pg { grid-template-columns: 1fr; }
     .ref-grid { grid-template-columns: 1fr; }
   }
+</style>
+
+<!-- The autocomplete popup + measurement mirror are built at runtime by
+     editor-plus.js, so they never carry Astro's scoping attribute. Their
+     styles must live in a global block or they'd silently never apply. -->
+<style is:global>
+  /* Mirror must match the textarea's metrics or the caret measurement drifts. */
+  .pg-code .editor-mirror {
+    position: absolute; inset: 0; margin: 0; border: 0;
+    padding: 16px; font-family: var(--font-mono); font-size: 13px; line-height: 1.6;
+    letter-spacing: 0; tab-size: 2; white-space: pre;
+    visibility: hidden; pointer-events: none; overflow: hidden; z-index: -1;
+  }
+  .pg-code .editor-pop {
+    position: absolute; z-index: 6; min-width: 168px; max-width: 260px; padding: 4px;
+    border-radius: 9px; background: var(--panel-2); border: 1px solid var(--border-strong);
+    box-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.85); animation: pgpop 0.12s ease;
+  }
+  @keyframes pgpop { from { opacity: 0; transform: translateY(-3px); } }
+  .pg-code .pop-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px;
+    padding: 4px 8px; border-radius: 6px; font-family: var(--font-mono);
+    font-size: 11.5px; color: var(--on-panel); cursor: default;
+  }
+  .pg-code .pop-row.active { background: var(--hover-strong); color: var(--text); }
+  .pg-code .pop-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .pg-code .pop-kind {
+    font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint);
+  }
+  .pg-code .pop-row.active .pop-kind { color: var(--accent, #6ea8fe); }
+
+  /* Token colors: these spans are injected by lume-playground.js at runtime,
+     so they must be styled globally too (otherwise the code renders plain). */
+  .pg-out .ln { display: block; white-space: pre; }
+  .pg-hl .kw { color: #ff7b9c; }
+  .pg-hl .ty { color: #6ec3ff; }
+  .pg-hl .fn { color: #ffd479; }
+  .pg-hl .num { color: #c792ea; }
+  .pg-hl .str, .pg-hl .cmt { color: var(--muted); font-style: italic; }
+  .pg-hl .op { color: var(--faint); }
+  .pg-out .kw { color: #ff7b9c; }
+  .pg-out .ty { color: #6ec3ff; }
+  .pg-out .num { color: #c792ea; }
+  .pg-out .str, .pg-out .cmt { color: var(--muted); }
+  .pg-out .pre { color: #ffd479; }
+  .pg-out .err { color: #ff6b6b; }
+  .pg-out .dim { color: var(--faint); }
 </style>

@@ -1,0 +1,27 @@
+---
+import BaseLayout from '../components/BaseLayout.astro';
+import LumeShowcase from '../components/LumeShowcase.astro';
+import translations from '../i18n';
+import type { Locale } from '../i18n';
+
+const locale = Astro.currentLocale as Locale;
+const t = translations[locale];
+---
+
+<BaseLayout title={locale === 'zh' ? 'Lume · 语言与 Playground' : 'Lume · language & playground'}>
+  <section class="section">
+    <div class="container">
+      <p class="eyebrow">Lume</p>
+      <h1 class="display" style="font-size: clamp(2.5rem, 6vw, 4rem);">
+        {locale === 'zh' ? '一门编译到 C 的小语言' : 'A tiny language that compiles to C'}
+      </h1>
+      <p class="muted" style="max-width: 42rem; font-size: 1.0625rem; margin: 20px 0 0;">
+        {locale === 'zh'
+          ? '在浏览器里直接写、直接跑。左边写 Lume，右边看生成的 C 代码和运行结果；语法高亮和自动补全都带上了。'
+          : 'Write and run it right in your browser. Lume on the left, generated C and output on the right — with syntax highlighting and autocomplete.'}
+      </p>
+    </div>
+  </section>
+
+  <LumeShowcase />
+</BaseLayout>

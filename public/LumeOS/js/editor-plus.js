@@ -25,6 +25,20 @@
   ];
   const BUILTINS = ['say', 'write', 'sqrt', 'abs', 'pow', 'len', 'int_to_str', 'range'];
 
+  /* Python 的补全表：只挑人真会想起来的那批，
+     把 dir(builtins) 全塞进去只会让候选框变成噪音。 */
+  const PY_KEYWORDS = [
+    'def', 'class', 'return', 'if', 'elif', 'else', 'for', 'while', 'in', 'not',
+    'and', 'or', 'is', 'import', 'from', 'as', 'with', 'try', 'except', 'finally',
+    'raise', 'lambda', 'yield', 'global', 'nonlocal', 'pass', 'break', 'continue',
+    'del', 'assert', 'async', 'await', 'match', 'case', 'True', 'False', 'None'
+  ];
+  const PY_BUILTINS = [
+    'print', 'len', 'range', 'int', 'str', 'float', 'bool', 'list', 'dict', 'set',
+    'tuple', 'sum', 'min', 'max', 'abs', 'round', 'sorted', 'reversed', 'enumerate',
+    'zip', 'map', 'filter', 'open', 'input', 'type', 'isinstance', 'repr', 'any', 'all'
+  ];
+
   const PAIRS = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'" };
   const OPENERS = Object.keys(PAIRS);
   const CLOSERS = [')', ']', '}'];
@@ -46,9 +60,9 @@
     return m ? m[0] : '';
   }
 
-  /* 去掉行尾注释，用于判断 "这一行是不是以 { 结束" */
-  function stripLineComment(s) {
-    const i = s.indexOf('//');
+  /* 去掉行尾注释，用于判断 "这一行是不是以 { 或 : 结束" */
+  function stripLineComment(s, py) {
+    const i = s.indexOf(py ? '#' : '//');
     return i === -1 ? s : s.slice(0, i);
   }
 
@@ -64,18 +78,21 @@
     return '  ';
   }
 
-  /* Enter 之后该缩进多少；顺便处理 "光标夹在 {} 之间" 的展开 */
-  function enterEdit(text, pos, unit) {
+  /* Enter 之后该缩进多少；顺便处理 "光标夹在 {} 之间" 的展开。
+     lang 传 'python' 时改看行尾冒号 —— Python 的块没有花括号，
+     def / if / for / with / else / try 全靠一个 : 开头。 */
+  function enterEdit(text, pos, unit, lang) {
+    const py = lang === 'python';
     const ls = lineStart(text, pos);
     const le = lineEnd(text, pos);
     const base = leadingOf(text.slice(ls, pos));
-    const before = stripLineComment(text.slice(ls, pos)).replace(/\s+$/, '');
-    const opens = /\{$/.test(before);
+    const before = stripLineComment(text.slice(ls, pos), py).replace(/\s+$/, '');
+    const opens = py ? /:$/.test(before) : /\{$/.test(before);
     const inner = opens ? base + unit : base;
 
-    /* 右边只有孤零零一个 } 时：补成三行，光标停在中间那行 */
+    /* 右边只有孤零零一个 } 时：补成三行，光标停在中间那行（只有花括号语言有这回事） */
     const rest = text.slice(pos, le);
-    if (/^\s*\}$/.test(rest)) {
+    if (!py && /^\s*\}$/.test(rest)) {
       const body = '\n' + inner + '\n' + base;
       return { text: body, caret: 1 + inner.length };
     }
@@ -127,6 +144,7 @@
   /* 候选：关键字 / 类型 / 内建 → 再补上缓冲区里出现过的标识符 */
   function complete(text, prefix, opts) {
     const max = (opts && opts.max) || 8;
+    const py = !!(opts && opts.lang === 'python');
     const p = String(prefix || '');
     if (!p) return [];
 
@@ -139,15 +157,15 @@
       rows.push({ label: item.label, kind: item.kind, call: !!item.call, score: score });
     };
 
-    KEYWORDS.forEach((w) => {
+    (py ? PY_KEYWORDS : KEYWORDS).forEach((w) => {
       const s = matchScore(w, p);
       if (s >= 0) add({ label: w, kind: 'keyword' }, s * 10);
     });
-    TYPES.forEach((w) => {
+    (py ? [] : TYPES).forEach((w) => {
       const s = matchScore(w, p);
       if (s >= 0) add({ label: w, kind: 'type' }, s * 10 + 1);
     });
-    BUILTINS.forEach((w) => {
+    (py ? PY_BUILTINS : BUILTINS).forEach((w) => {
       const s = matchScore(w, p);
       if (s >= 0) add({ label: w, kind: 'builtin', call: true }, s * 10 + 2);
     });
@@ -166,8 +184,13 @@
     return rows.slice(0, max);
   }
 
-  /* 行注释开关：整块都注释了就取消，否则全部加上 */
-  function toggleComment(text, start, end) {
+  /* 行注释开关：整块都注释了就取消，否则全部加上。
+     prefix 让 Python 用 #、Lume/JS 用 //。 */
+  function toggleComment(text, start, end, prefix) {
+    const mark = prefix || '//';
+    const safe = mark.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const has = new RegExp('^(\\s*)' + safe + ' ?');
+
     let from = lineStart(text, start);
     let to = lineEnd(text, end);
     if (end > start && text[end - 1] === '\n') to = lineEnd(text, end - 1);
@@ -175,16 +198,32 @@
     const block = text.slice(from, to);
     const lines = block.split('\n');
     const filled = lines.filter((l) => l.trim());
-    const commented = filled.length > 0 && filled.every((l) => /^\s*\/\//.test(l));
+    const commented = filled.length > 0 && filled.every((l) => has.test(l));
 
     const next = lines
       .map((l) => {
         if (!l.trim()) return l;
-        return commented ? l.replace(/^(\s*)\/\/ ?/, '$1') : l.replace(/^(\s*)/, '$1// ');
+        return commented ? l.replace(has, '$1') : l.replace(/^(\s*)/, '$1' + mark + ' ');
       })
       .join('\n');
 
     return { from: from, to: to, text: next };
+  }
+
+  /* 这次打的是「后引号」吗？
+     判据只看当前行：光标之前同种引号的个数。
+     偶数 = 没有未闭合的开引号，这是开头那个；奇数 = 已有一个张着的，这是收尾那个。
+     转义过的不计数（"a\"b" 里那个 \" 是内容，不是配对）*/
+  function closingQuote(text, pos, ch) {
+    const seg = text.slice(lineStart(text, pos), pos);
+    let n = 0;
+    for (let i = 0; i < seg.length; i++) {
+      if (seg[i] !== ch) continue;
+      let bs = 0;
+      while (i - bs - 1 >= 0 && seg[i - bs - 1] === '\\') bs++;
+      if (bs % 2 === 0) n++;
+    }
+    return n % 2 === 1;
   }
 
   const CORE = {
@@ -198,6 +237,7 @@
     symbolsOf: symbolsOf,
     complete: complete,
     toggleComment: toggleComment,
+    closingQuote: closingQuote,
     PAIRS: PAIRS
   };
 
@@ -207,11 +247,13 @@
   function attach(opts) {
     const area = opts.area;
     const wrap = opts.wrap;
-    const isCode = opts.lang === 'lume';
     const lang = opts.lang || 'text';
+    const py = lang === 'python';
+    /* 会有"代码行为"的语言：补全、注释开关、缩进 */
+    const isCode = lang === 'lume' || py;
     /* 括号 / 引号配对不分语言：Markdown 和纯文本一样需要（写 md 时引号成对尤其常见），
        所以这条单独开一个开关，不跟着代码补全那个门槛走 */
-    const pairOn = opts.pairs !== false && /^(lume|md|text|none)$/.test(lang);
+    const pairOn = opts.pairs !== false && /^(lume|python|md|text|none)$/.test(lang);
     const unit = detectUnit(area.value);
 
     let pop = null;
@@ -327,7 +369,7 @@
       const word = wordBefore(area.value, pos);
       if (!word || /^[0-9]/.test(word)) return hidePop();
 
-      const rows = complete(area.value, word, { max: 8, symbols: symbolsOf(area.value) });
+      const rows = complete(area.value, word, { max: 8, symbols: symbolsOf(area.value), lang: lang });
       if (!rows.length) return hidePop();
 
       items = rows;
@@ -390,9 +432,9 @@
         }
       }
 
-      /* Enter：自动缩进 + {} 展开 */
+      /* Enter：自动缩进 + {} 展开（Python 看行尾冒号） */
       if (e.key === 'Enter' && !mod && !e.shiftKey && start === end) {
-        const ed = enterEdit(value, start, unit);
+        const ed = enterEdit(value, start, unit, lang);
         e.preventDefault();
         replaceRange(start, start, ed.text, start + ed.caret);
         return;
@@ -422,7 +464,7 @@
       /* Ctrl/Cmd + / 注释开关 */
       if (mod && e.key === '/' && isCode) {
         e.preventDefault();
-        const r = toggleComment(value, start, end);
+        const r = toggleComment(value, start, end, py ? '#' : '//');
         replaceRange(r.from, r.to, r.text, r.from, r.from + r.text.length);
         return;
       }
@@ -476,6 +518,16 @@
             hidePop();
             return;
           }
+        }
+
+        /* 后引号（给字符串收尾的那个）只落一个字符，不再补右半边。
+           Lume / Python 里字符串常连着写（say("a" + "b")），
+           一味补对会出现 """" 这种叠着的引号。 */
+        if (isCode && start === end && (bch === '"' || bch === "'") && closingQuote(value, start, bch)) {
+          e.preventDefault();
+          replaceRange(start, start, bch, start + 1);
+          hidePop();
+          return;
         }
 
         /* 自动配对：后面紧跟标识符时不插手，免得破坏已有文字。

@@ -3,6 +3,7 @@ export default {
   nav: {
     home: "首页",
     projects: "项目",
+    lume: "Lume",
     about: "关于",
     contact: "联系"
   },

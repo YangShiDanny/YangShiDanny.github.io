@@ -131,6 +131,15 @@ fn main() {
     if (!ta) return;
     if (!ta.value.trim()) ta.value = DEFAULT;
 
+    /* Reuse LumeOS's editor feel: bracket pairing, auto-indent and the
+       keyword/symbol autocomplete popup. `ta.parentElement` is .pg-code,
+       which is position:relative and hosts the popup + measurement mirror. */
+    if (window.LumeEdit && window.LumeEdit.attach) {
+      try {
+        window.LumeEdit.attach({ area: ta, wrap: ta.parentElement, lang: 'lume' });
+      } catch (e) { /* non-fatal: editor still works without it */ }
+    }
+
     function paint() { hl.innerHTML = highlight(ta.value + '\n', 'lume'); }
     function showTab(which) {
       var cOn = which === 'c';

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* ============================================================
-   把官方 pyodide-core-*.tar.bz2 解成 vendor/pyodide/ 目录
+   把官方 pyodide-core-*.tar.bz2 解成 public/LumeOS/vendor/pyodide/ 目录
    ============================================================
    本地开发时 LumeOS 会优先吃这个目录里的文件（见 js/lume-py.js 的
    tryVendor），好处是 localhost 上 `py run` 既不下载 6.4MB、也不用
@@ -12,8 +12,8 @@
    bz2 解码器直接复用浏览器端那份（public/LumeOS/js/lib/bunzip.js），
    免得为了一个脚本再往 package.json 里塞依赖。
 
-   产物目录在 .gitignore 里（13MB 的二进制不该进仓库），线上构建也
-   不会带上它 —— 那条路走 IndexedDB 或者 CDN。
+   产物目录在 .gitignore 里（13MB 的二进制不该进仓库），所以 CI 里
+   根本不会生成它，线上照旧走 IndexedDB（py setup）或者 CDN。
    ============================================================ */
 'use strict';
 
@@ -22,7 +22,11 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..');
-const OUT = path.join(ROOT, 'vendor', 'pyodide');
+/* 必须落在 public/LumeOS/vendor/pyodide —— lume-py.js 探测的是
+   <LumeOS 基路径>vendor/pyodide/pyodide.js，只有 public 下的东西会被
+   dev server 和构建当静态资源端出来。放在仓库根的 vendor/ 是够不着的
+   （之前就栽在这：文件在、探不到、每次都退回 CDN）。 */
+const OUT = path.join(ROOT, 'public', 'LumeOS', 'vendor', 'pyodide');
 const BUNZIP = path.join(ROOT, 'public', 'LumeOS', 'js', 'lib', 'bunzip.js');
 
 function die(msg) {
