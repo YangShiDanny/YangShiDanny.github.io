@@ -1,0 +1,8 @@
+[package]
+name = "lumeos-boot"
+version = "0.1.0"
+edition = "2021"
+description = "把内核 ELF 包成可引导磁盘映像（img / iso）"
+
+[dependencies]
+bootloader = "0.11"

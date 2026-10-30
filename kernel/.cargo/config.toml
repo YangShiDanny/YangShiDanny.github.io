@@ -1,0 +1,24 @@
+# 注意：这里**故意不写** [build] target。
+#
+# workspace 里有两个目标完全不同的 crate：
+#   lumeos-kernel —— 裸机 (#![no_std])，必须编给 x86_64-unknown-none
+#   lumeos-boot   —— 宿主工具（读文件、起 grub-mkrescue），必须编给宿主
+# 一旦在 [build] 里钉死 target，宿主工具也会被当成裸机去编，
+# 报 "can't find crate for `std`"（serde/getrandom 连锁崩）。
+#
+# 所以 target 写在 kernel/.cargo/config.toml 里 —— cargo 认「离当前目录最近的配置」，
+# 在 kernel/ 子目录里编内核会自动取到，在仓库根编 boot 工具则取宿主。
+
+# 用 nightly 的 build-std 现编 core/alloc/compiler_builtins
+#
+# **这段不能放这里**：放在 workspace 根会连宿主工具 lumeos-boot 一起
+# 触发 build-std，宿主编译于是同时加载「std 带来的 core」和「现编的 core」，
+# 报 E0152 duplicate lang item `sized`。
+# build-std 已经写在 kernel/.cargo/config.toml 里，那里只对内核生效。
+
+[target.x86_64-unknown-none]
+# 裸机不能要 PIC，链接脚本要的是固定地址的可执行文件
+rustflags = ["-C", "relocation-model=static"]
+
+[alias]
+lume-build = "build -p lumeos-kernel --release --target x86_64-unknown-none"
