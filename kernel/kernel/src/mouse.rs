@@ -105,38 +105,50 @@ pub extern "x86-interrupt" fn mouse_handler(_frame: x86_64::structures::idt::Int
     let mut data: Port<u8> = Port::new(0x60);
     let b = unsafe { data.read() };
     let mut s = STATE.lock();
+    // 包首字节（idx==0）的 bit3 恒为 1（协议规定）。不是 1 说明状态机站在
+    // 包的中间——之前丢过字节，从这儿往下全解错，光标会瞬移乱跳。
+    // 丢弃该字节停在 idx=0，等真正的包首重新同步。
+    // 注意：位移字节（idx=1/2）可以是任何值（含 bit3=0），不能对它们校验。
+    if s.idx == 0 && b & 0x08 == 0 {
+        drop(s);
+        unsafe { crate::interrupts::PICS.lock().notify_end_of_interrupt(interrupts::PIC_2_OFFSET + 4) };
+        return;
+    }
     let idx = s.idx as usize;
     s.buf[idx] = b;
     s.idx += 1;
     if s.idx == 3 {
         s.idx = 0;
         let b0 = s.buf[0];
-        // PS/2 鼠标位移是 9 位有符号：低 8 位在 byte1/byte2，第 9 位符号在 byte0
-        // 的 bit4(X) / bit5(Y)。只当 i8 会把超过 ±127 的位移（比如 QEMU 把一次大
-        // 幅移动拆成多个包，单包含量可能到 ±255）解错符号，光标会朝反方向飞。
-        let mut dx = s.buf[1] as i16;
-        if b0 & 0x10 != 0 {
-            dx -= 256;
-        }
-        let mut dy = s.buf[2] as i16;
-        if b0 & 0x20 != 0 {
-            dy -= 256;
-        }
-        let (sw, sh) = (crate::vga::screen_w() as i32, crate::vga::screen_h() as i32);
-        s.x += dx as i32;
-        // PS/2 的 Y 正方向朝屏幕上方，转成屏幕坐标要反一下
-        s.y -= dy as i32;
-        if s.x < 0 {
-            s.x = 0;
-        }
-        if s.x >= sw {
-            s.x = sw - 1;
-        }
-        if s.y < 0 {
-            s.y = 0;
-        }
-        if s.y >= sh {
-            s.y = sh - 1;
+        // 溢出标志（bit6=X / bit7=Y）：位移字节不可信，丢弃位移只留按键
+        if b0 & 0xC0 == 0 {
+            // PS/2 鼠标位移是 9 位有符号：低 8 位在 byte1/byte2，第 9 位符号在 byte0
+            // 的 bit4(X) / bit5(Y)。只当 i8 会把超过 ±127 的位移（比如 QEMU 把一次大
+            // 幅移动拆成多个包，单包含量可能到 ±255）解错符号，光标会朝反方向飞。
+            let mut dx = s.buf[1] as i16;
+            if b0 & 0x10 != 0 {
+                dx -= 256;
+            }
+            let mut dy = s.buf[2] as i16;
+            if b0 & 0x20 != 0 {
+                dy -= 256;
+            }
+            let (sw, sh) = (crate::vga::screen_w() as i32, crate::vga::screen_h() as i32);
+            s.x += dx as i32;
+            // PS/2 的 Y 正方向朝屏幕上方，转成屏幕坐标要反一下
+            s.y -= dy as i32;
+            if s.x < 0 {
+                s.x = 0;
+            }
+            if s.x >= sw {
+                s.x = sw - 1;
+            }
+            if s.y < 0 {
+                s.y = 0;
+            }
+            if s.y >= sh {
+                s.y = sh - 1;
+            }
         }
         let left = b0 & 0x01 != 0;
         // 上升沿：从「没按」变「按」记一次点击
