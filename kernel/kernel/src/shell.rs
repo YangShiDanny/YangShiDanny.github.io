@@ -196,7 +196,15 @@ impl Shell {
         let (pl, pc) = vga::cursor_pos();
 
         loop {
-            let key = interrupts::read_key_blocking();
+            // 读键改成轮询 + hlt：等待期间跟随鼠标画指针 overlay，
+            // 否则一进终端窗口指针就「消失」（桌面没人重画了）。
+            let key = loop {
+                if let Some(k) = interrupts::poll_key() {
+                    break k;
+                }
+                crate::desktop::cursor_overlay();
+                x86_64::instructions::hlt();
+            };
             match key {
                 Key::Char(b) => {
                     self.line.insert(b);

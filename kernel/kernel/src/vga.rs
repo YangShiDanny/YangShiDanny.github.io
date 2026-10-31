@@ -613,6 +613,28 @@ pub fn pixel(x: usize, y: usize, rgb: (u8, u8, u8)) {
     }
 }
 
+/// 读一个像素（越界返回黑色）。光标 overlay 保存/恢复底下像素用。
+pub fn read_pixel(x: usize, y: usize) -> (u8, u8, u8) {
+    let (ptr, len, info) = fb_raw();
+    let w = info.width;
+    let h = info.height;
+    if x >= w || y >= h {
+        return (0, 0, 0);
+    }
+    let bpp = info.bytes_per_pixel.max(1);
+    let off = (y * info.stride + x) * bpp;
+    if off + 2 >= len {
+        return (0, 0, 0);
+    }
+    let p = ptr as *const u8;
+    unsafe {
+        match info.pixel_format {
+            PixelFormat::Bgr => (*(p.add(off + 2)), *(p.add(off + 1)), *(p.add(off))),
+            _ => (*(p.add(off)), *(p.add(off + 1)), *(p.add(off + 2))),
+        }
+    }
+}
+
 /// 实心矩形
 pub fn fill_rect(x: usize, y: usize, w: usize, h: usize, rgb: (u8, u8, u8)) {
     let (ptr, len, info) = fb_raw();

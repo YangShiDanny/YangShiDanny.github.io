@@ -17,6 +17,8 @@ use crate::interrupts::{self, Key};
 use crate::mouse;
 use crate::vga;
 use alloc::{format, vec::Vec};
+use core::sync::atomic::{AtomicIsize, Ordering};
+use spin::Mutex;
 
 /* ---------- 配色（RGB 元组，和 vga 调色板同源） ---------- */
 const BG: (u8, u8, u8) = (12, 12, 16);
@@ -61,15 +63,13 @@ impl Rect {
 struct Icon {
     app: App,
     label: &'static str,
-    glyph: &'static str,
-    accent: (u8, u8, u8),
 }
 
 const ICONS: &[Icon] = &[
-    Icon { app: App::Terminal, label: "Terminal", glyph: ">_", accent: (70, 200, 200) },
-    Icon { app: App::Files, label: "Files", glyph: "F", accent: (110, 150, 255) },
-    Icon { app: App::Settings, label: "Settings", glyph: "S", accent: (235, 225, 110) },
-    Icon { app: App::About, label: "About", glyph: "?", accent: (110, 230, 130) },
+    Icon { app: App::Terminal, label: "Terminal" },
+    Icon { app: App::Files, label: "Files" },
+    Icon { app: App::Settings, label: "Settings" },
+    Icon { app: App::About, label: "About" },
 ];
 
 fn app_accent(a: App) -> (u8, u8, u8) {
@@ -90,28 +90,51 @@ fn app_title(a: App) -> &'static str {
     }
 }
 
-/// 所有可点击图标的位置：先是左侧桌面列，再是底部 Dock。
+/// 图标线色：对齐 Web 版 `--on-panel`（浅色描边，不是彩色色块）
+const ICON_COL: (u8, u8, u8) = (226, 226, 236);
+
+/// 可点击区域：桌面列（对齐 Web `.desk-icons` top:46 left:18）+ Dock
+/// （对齐 Web `.dock` bottom:14、item 48、gap 4、padding 8）。
 fn icon_rects() -> Vec<(App, Rect)> {
     let sw = vga::screen_w();
     let sh = vga::screen_h();
     let mut v = Vec::new();
-    let boxs = 60usize;
-    let gap = 94usize;
-    let x0 = 46usize;
-    let y0 = 58usize;
+    // 左侧桌面图标列：图标 24px 居中 + 下方标签
+    let cw = 76usize;
+    let ch = 58usize;
+    let step = 66usize;
     for (i, ic) in ICONS.iter().enumerate() {
-        v.push((ic.app, Rect { x: x0, y: y0 + i * gap, w: boxs, h: boxs }));
+        v.push((ic.app, Rect { x: 18, y: 46 + i * step, w: cw, h: ch }));
     }
-    let docks = 56usize;
-    let dgap = 84usize;
+    // 底部 Dock
     let n = ICONS.len();
-    let dw = n * dgap + 20;
+    let item = 48usize;
+    let gap = 4usize;
+    let pad = 8usize;
+    let dw = n * item + (n - 1) * gap + pad * 2;
+    let dh = item + pad * 2;
     let dx = (sw - dw) / 2;
-    let dy = sh - 72 - 14;
+    let dy = sh - 14 - dh;
     for (i, ic) in ICONS.iter().enumerate() {
-        v.push((ic.app, Rect { x: dx + 12 + i * dgap, y: dy + 8, w: docks, h: docks }));
+        v.push((
+            ic.app,
+            Rect { x: dx + pad + i * (item + gap), y: dy + pad, w: item, h: item },
+        ));
     }
     v
+}
+
+/// Dock 面板外框（含 padding），画玻璃条用
+fn dock_rect() -> Rect {
+    let sw = vga::screen_w();
+    let sh = vga::screen_h();
+    let n = ICONS.len();
+    let item = 48usize;
+    let gap = 4usize;
+    let pad = 8usize;
+    let dw = n * item + (n - 1) * gap + pad * 2;
+    let dh = item + pad * 2;
+    Rect { x: (sw - dw) / 2, y: sh - 14 - dh, w: dw, h: dh }
 }
 
 fn window_rect() -> Rect {
@@ -139,14 +162,146 @@ fn hit_test(x: i32, y: i32) -> Option<App> {
     None
 }
 
-/// 圆角图标块：实色方块 + 四角用背景色圆挖掉，做出圆角
-fn round_icon(x: usize, y: usize, s: usize, accent: (u8, u8, u8)) {
-    vga::fill_rect(x, y, s, s, accent);
-    let rad = 12usize;
-    vga::fill_circle(x, y, rad, BG);
-    vga::fill_circle(x + s, y, rad, BG);
-    vga::fill_circle(x, y + s, rad, BG);
-    vga::fill_circle(x + s, y + s, rad, BG);
+/* ---------- 24×24 线框图标（对齐 Web icons.js 的描边风格） ---------- */
+
+fn plot(x: i32, y: i32, col: (u8, u8, u8)) {
+    if x >= 0 && y >= 0 {
+        let (ux, uy) = (x as usize, y as usize);
+        if ux < vga::screen_w() && uy < vga::screen_h() {
+            vga::pixel(ux, uy, col);
+        }
+    }
+}
+
+/// Bresenham 直线
+fn line(x0: i32, y0: i32, x1: i32, y1: i32, col: (u8, u8, u8)) {
+    let dx = (x1 - x0).abs();
+    let dy = -(y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let (mut x, mut y) = (x0, y0);
+    let mut err = dx + dy;
+    loop {
+        plot(x, y, col);
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
+/// 中点圆描边（8 分对称）
+fn circle_stroke(cx: i32, cy: i32, r: i32, col: (u8, u8, u8)) {
+    let (mut x, mut y) = (0i32, r);
+    let mut d = 1 - r;
+    while x <= y {
+        for (px, py) in [
+            (cx + x, cy + y), (cx - x, cy + y), (cx + x, cy - y), (cx - x, cy - y),
+            (cx + y, cy + x), (cx - y, cy + x), (cx + y, cy - x), (cx - y, cy - x),
+        ] {
+            plot(px, py, col);
+        }
+        if d < 0 {
+            d += 2 * x + 3;
+        } else {
+            d += 2 * (x - y) + 5;
+            y -= 1;
+        }
+        x += 1;
+    }
+}
+
+/// 1/4 圆弧：圆心 (cx,cy)，象限方向 (qx,qy) ∈ {1,-1}
+fn arc_quarter(cx: i32, cy: i32, r: i32, qx: i32, qy: i32, col: (u8, u8, u8)) {
+    let (mut x, mut y) = (0i32, r);
+    let mut d = 1 - r;
+    while x <= y {
+        plot(cx + qx * x, cy + qy * y, col);
+        plot(cx + qx * y, cy + qy * x, col);
+        if d < 0 {
+            d += 2 * x + 3;
+        } else {
+            d += 2 * (x - y) + 5;
+            y -= 1;
+        }
+        x += 1;
+    }
+}
+
+/// 圆角矩形描边（terminal 图标的外框）
+fn stroke_round_rect(x: i32, y: i32, w: i32, h: i32, r: i32, col: (u8, u8, u8)) {
+    for dx in (x + r)..=(x + w - r) {
+        plot(dx, y, col);
+        plot(dx, y + h, col);
+    }
+    for dy in (y + r)..=(y + h - r) {
+        plot(x, dy, col);
+        plot(x + w, dy, col);
+    }
+    arc_quarter(x + r, y + r, r, -1, -1, col);
+    arc_quarter(x + w - r, y + r, r, 1, -1, col);
+    arc_quarter(x + r, y + h - r, r, -1, 1, col);
+    arc_quarter(x + w - r, y + h - r, r, 1, 1, col);
+}
+
+/// 按应用画 24×24 线框图标，(ox,oy) 为图标左上角。
+/// 形状逐一对应 Web icons.js 里的 SVG 路径。
+fn draw_line_icon(app: App, ox: usize, oy: usize, col: (u8, u8, u8)) {
+    let x = ox as i32;
+    let y = oy as i32;
+    match app {
+        // <rect x="2.5" y="4" width="19" height="16" rx="3"/> + ">_" 提示符
+        App::Terminal => {
+            stroke_round_rect(x + 2, y + 4, 19, 16, 3, col);
+            line(x + 7, y + 9, x + 10, y + 12, col);
+            line(x + 10, y + 12, x + 7, y + 14, col);
+            line(x + 13, y + 15, x + 17, y + 15, col);
+        }
+        // 文件夹：tab + 斜坡 + 主体圆角轮廓
+        App::Files => {
+            line(x + 6, y + 5, x + 9, y + 5, col); // tab 顶
+            line(x + 9, y + 5, x + 11, y + 8, col); // 斜坡
+            line(x + 11, y + 8, x + 19, y + 8, col); // 右顶边
+            arc_quarter(x + 19, y + 10, 2, 1, -1, col); // 右上角
+            line(x + 21, y + 10, x + 21, y + 17, col); // 右边
+            arc_quarter(x + 19, y + 17, 2, 1, 1, col); // 右下角
+            line(x + 19, y + 19, x + 5, y + 19, col); // 底边
+            arc_quarter(x + 5, y + 17, 2, -1, 1, col); // 左下角
+            line(x + 3, y + 17, x + 3, y + 8, col); // 左边
+            arc_quarter(x + 5, y + 7, 2, -1, -1, col); // 左上角
+        }
+        // 齿轮：中圆 + 8 根齿
+        App::Settings => {
+            circle_stroke(x + 12, y + 12, 3, col);
+            const TEETH: [(i32, i32, i32, i32); 8] = [
+                (18, 12, 21, 12), (17, 17, 19, 19), (12, 18, 12, 21), (7, 17, 5, 19),
+                (6, 12, 3, 12), (7, 7, 5, 5), (12, 6, 12, 3), (17, 7, 19, 5),
+            ];
+            for (x0, y0, x1, y1) in TEETH {
+                line(x + x0, y + y0, x + x1, y + y1, col);
+            }
+        }
+        // 四角星（sparkle）
+        App::About => {
+            const STAR: [(i32, i32); 8] = [
+                (12, 3), (14, 10), (21, 12), (14, 14),
+                (12, 21), (10, 14), (3, 12), (10, 10),
+            ];
+            for i in 0..8 {
+                let (x0, y0) = STAR[i];
+                let (x1, y1) = STAR[(i + 1) % 8];
+                line(x + x0, y + y0, x + x1, y + y1, col);
+            }
+        }
+    }
 }
 
 /// 确定性星空：每次重画用同一个种子，星星位置稳定不动
@@ -164,37 +319,72 @@ fn draw_starfield() {
     }
 }
 
-const CURSOR: &[&str] = &[
-    "XX..........",
-    "XXXX........",
-    "XX.XX.......",
-    "XX..XX......",
-    "XX...XX.....",
-    "XX....XX....",
-    "XX.....XX...",
-    "XX......XX..",
-    "XX...XXXXX..",
-    "XX..XX......",
-    "XX.XX.......",
-    "XXXX........",
-    "XX..........",
-];
-
-/// 经典箭头光标（先画黑色投影，再画白色本体）
+/* ---------- 光标：Web 版同款 —— 9px 实心白点 + 1px 深色描边 ---------- */
 fn draw_cursor(x: i32, y: i32) {
-    let x = x as usize;
-    let y = y as usize;
-    for (ry, row) in CURSOR.iter().enumerate() {
-        for (rx, c) in row.chars().enumerate() {
-            if c == 'X' {
-                vga::pixel(x + rx + 1, y + ry + 1, (0, 0,0));
+    let (cx, cy) = (x as usize, y as usize);
+    vga::fill_circle(cx, cy, 5, (8, 8, 12));
+    vga::fill_circle(cx, cy, 4, (250, 250, 252));
+}
+
+/* ---------- 终端等文字环境的指针 overlay ----------
+   桌面态的光标由 draw_scene 每帧重画；但终端窗口是阻塞 shell，
+   没人重画桌面，指针就「消失」了。这里给文字环境一个独立 overlay：
+   位置一动就恢复底下的像素块、再把白点画到新位置。
+   保存/恢复都是 11×11 的小块（白点 r=5 直径 11），开销可忽略。 */
+
+const OV: usize = 11; // 块边长（奇数，中心对齐）
+
+struct Overlay {
+    x: usize,
+    y: usize,
+    under: [[(u8, u8, u8); OV]; OV],
+}
+
+static OV_STATE: Mutex<Option<Overlay>> = Mutex::new(None);
+static OV_LAST_MOUSE: AtomicIsize = AtomicIsize::new(isize::MIN);
+
+/// 终端里调用：跟随鼠标画白点（带底下像素的保存/恢复）
+pub fn cursor_overlay() {
+    let mx = mouse::x();
+    let my = mouse::y();
+    let key = ((mx as isize) << 32) | (my as isize & 0xFFFF_FFFF);
+    if OV_LAST_MOUSE.load(Ordering::Relaxed) == key {
+        return; // 没动，不重画（避免覆盖 shell 刚输出的文字）
+    }
+    OV_LAST_MOUSE.store(key, Ordering::Relaxed);
+    let mut st = OV_STATE.lock();
+    // 恢复旧块
+    if let Some(old) = st.take() {
+        for dy in 0..OV {
+            for dx in 0..OV {
+                vga::pixel(old.x + dx, old.y + dy, old.under[dy][dx]);
             }
         }
     }
-    for (ry, row) in CURSOR.iter().enumerate() {
-        for (rx, c) in row.chars().enumerate() {
-            if c == 'X' {
-                vga::pixel(x + rx, y + ry, (245, 245, 250));
+    let (sw, sh) = (vga::screen_w(), vga::screen_h());
+    let cx = (mx.max(0) as usize).min(sw - 1);
+    let cy = (my.max(0) as usize).min(sh - 1);
+    let x0 = cx.saturating_sub(OV / 2);
+    let y0 = cy.saturating_sub(OV / 2);
+    // 保存新块底下像素
+    let mut under = [[(0u8, 0u8, 0u8); OV]; OV];
+    for dy in 0..OV {
+        for dx in 0..OV {
+            under[dy][dx] = vga::read_pixel(x0 + dx, y0 + dy);
+        }
+    }
+    *st = Some(Overlay { x: x0, y: y0, under });
+    draw_cursor(mx, my);
+}
+
+/// 离开文字环境前调用：恢复底下的像素
+pub fn cursor_overlay_clear() {
+    OV_LAST_MOUSE.store(isize::MIN, Ordering::Relaxed);
+    let mut st = OV_STATE.lock();
+    if let Some(old) = st.take() {
+        for dy in 0..OV {
+            for dx in 0..OV {
+                vga::pixel(old.x + dx, old.y + dy, old.under[dy][dx]);
             }
         }
     }
@@ -279,8 +469,7 @@ fn draw_about() {
 /// 整个场景：背景 + 菜单栏 + 图标 + Dock + 打开的窗口 + 光标
 fn draw_scene(open: OpenApp) {
     let sw = vga::screen_w();
-    let sh = vga::screen_h();
-    vga::fill_rect(0, 0, sw, sh, BG);
+    vga::fill_rect(0, 0, sw, vga::screen_h(), BG);
     draw_starfield();
 
     // 顶部菜单栏
@@ -295,36 +484,32 @@ fn draw_scene(open: OpenApp) {
     let rects = icon_rects();
     let n = ICONS.len();
 
-    // 左侧桌面图标列
+    // 左侧桌面图标列：线框图标 + 下方标签（透明底，星星从底下透出）
     for (i, ic) in ICONS.iter().enumerate() {
         let r = rects[i].1;
-        round_icon(r.x, r.y, r.w, ic.accent);
-        let gw = ic.glyph.len() * 9 + 1;
-        vga::text(r.x + (r.w - gw) / 2, r.y + r.w / 2 - 8, ic.glyph, (245, 245, 250), Some(ic.accent));
+        draw_line_icon(ic.app, r.x + (r.w - 24) / 2, r.y + 6, ICON_COL);
         let lw = ic.label.len() * 9 + 1;
-        vga::text(r.x + (r.w - lw) / 2, r.y + r.h + 4, ic.label, TEXT, Some(BG));
+        vga::text(
+            r.x + (r.w - lw) / 2,
+            r.y + 6 + 24 + 5,
+            ic.label,
+            TEXT,
+            None,
+        );
     }
 
-    // 底部 Dock
-    let dw = n * 84 + 20;
-    let dx = (sw - dw) / 2;
-    let dy = sh - 72 - 14;
-    vga::fill_rect(dx, dy, dw, 72, PANEL);
-    vga::fill_circle(dx, dy, 14, BG);
-    vga::fill_circle(dx + dw, dy, 14, BG);
-    vga::fill_circle(dx, dy + 72, 14, BG);
-    vga::fill_circle(dx + dw, dy + 72, 14, BG);
+    // 底部 Dock：玻璃条（面板 + 1px 边线 + 圆角挖角），里面是线框图标
+    let d = dock_rect();
+    vga::fill_rect(d.x, d.y, d.w, d.h, PANEL);
+    vga::stroke_rect(d.x, d.y, d.w, d.h, (58, 58, 66));
+    let rad = 12usize;
+    vga::fill_circle(d.x, d.y, rad, BG);
+    vga::fill_circle(d.x + d.w, d.y, rad, BG);
+    vga::fill_circle(d.x, d.y + d.h, rad, BG);
+    vga::fill_circle(d.x + d.w, d.y + d.h, rad, BG);
     for i in 0..n {
         let r = rects[n + i].1;
-        round_icon(r.x, r.y, r.w, ICONS[i].accent);
-        let gw = ICONS[i].glyph.len() * 9 + 1;
-        vga::text(
-            r.x + (r.w - gw) / 2,
-            r.y + r.w / 2 - 8,
-            ICONS[i].glyph,
-            (245, 245, 250),
-            Some(ICONS[i].accent),
-        );
+        draw_line_icon(ICONS[i].app, r.x + (r.w - 24) / 2, r.y + (r.h - 24) / 2, ICON_COL);
     }
 
     // 打开的应用窗口（Terminal 不在这里画，它由 launch_terminal 接管）
@@ -344,12 +529,14 @@ fn draw_scene(open: OpenApp) {
 
 /// 打开终端：画窗框，把文字 viewport 指到客户区，跑 shell，回来时撤销 viewport
 fn launch_terminal() {
+    cursor_overlay_clear();
     let accent = app_accent(App::Terminal);
     draw_window_frame(app_title(App::Terminal), accent);
     let r = window_rect();
     let c = client_rect(r);
     vga::set_viewport(c.x, c.y, c.w, c.h);
     crate::shell::Shell::new().run();
+    cursor_overlay_clear();
     vga::reset_viewport();
 }
 
