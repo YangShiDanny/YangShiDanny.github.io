@@ -20,10 +20,12 @@
 
 extern crate alloc;
 
+mod desktop;
 mod fs;
 mod gdt;
 mod interrupts;
 mod memory;
+mod mouse;
 mod serial;
 mod shell;
 mod vga;
@@ -51,6 +53,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // 立刻三重故障 —— 机器静默重启，屏幕上什么都留不下。
     gdt::init();
     interrupts::init_idt();
+    // 把 PIT 显式编程成 100 Hz —— bootloader 会改掉它，不重设的话定时器不响，
+    // uptime 不往前走，后面的启动延时和桌面时钟全卡死。
+    interrupts::init_pit();
 
     // 先把 framebuffer 从 BootInfo 里取出来 —— memory::init 会把整个
     // `&'static mut BootInfo` 拿走，之后就访问不到字段了。bootloader 给的是
@@ -76,6 +81,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     // SAFETY: IDT 已装好，PIC 还没重映射；这一步把 IRQ 挪到 0x20 之后
     unsafe { interrupts::PICS.lock().initialize() };
+    // 开启 PS/2 鼠标通道（在开中断之前把配置字节里的 IRQ12 位打开）
+    mouse::init();
     x86_64::instructions::interrupts::enable();
 
     vga::boot_line("gdt/idt  loaded, interrupts live");
@@ -94,10 +101,16 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     ));
 
     vga::boot_done();
-    serial::write_str("LumeOS: handing over to the shell\n");
+    serial::write_str("LumeOS: handing over to the desktop\n");
 
-    // 不返回：从此这台机器的时间全花在等按键上
-    shell::Shell::new().run();
+    // 稍微停一下，让人看清启动日志，再进桌面
+    let t0 = interrupts::uptime_ms();
+    while interrupts::uptime_ms().wrapping_sub(t0) < 1200 {
+        x86_64::instructions::hlt();
+    }
+
+    // 不返回：桌面主循环接管，鼠标键盘都归它管
+    desktop::run();
 }
 
 #[panic_handler]

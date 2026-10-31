@@ -50,6 +50,24 @@ pub fn uptime_secs() -> u64 {
     uptime_ms() / 1000
 }
 
+/// 真正把 PIT（8254 定时器）编程成 100 Hz。
+///
+/// bootloader 接管后会把 PIT 改掉甚至关掉，所以这里必须显式重设一遍，
+/// 否则 IRQ0 不响，`TICKS` 永远是 0，`uptime_ms()` 恒为 0 —— 任何靠它计时的
+/// 地方（启动延时、桌面时钟）都会卡住。命令字 0x36 = 通道0 + 先低后高 +
+/// 模式3(方波) + 二进制；分频值 = 1_193_182 / 100 ≈ 11932。
+pub fn init_pit() {
+    let divisor: u16 = (1_193_182 / TICK_HZ as u32) as u16;
+    // SAFETY: 0x43 是 PIT 控制端口，0x40 是通道0 数据端口
+    unsafe {
+        let mut ctrl: Port<u8> = Port::new(0x43);
+        let mut ch0: Port<u8> = Port::new(0x40);
+        ctrl.write(0x36);
+        ch0.write((divisor & 0xFF) as u8);
+        ch0.write((divisor >> 8) as u8);
+    }
+}
+
 /* ---------- 键盘 ---------- */
 
 /// 按键：不是「扫描码」，是「人类按了什么」
@@ -328,6 +346,8 @@ pub fn init_idt() {
     idt[PIC_1_OFFSET].set_handler_fn(timer_handler);
     idt[PIC_1_OFFSET + 1].set_handler_fn(keyboard_handler);
     idt[PIC_1_OFFSET + 4].set_handler_fn(com1_handler);
+    // IRQ12（aux 鼠标）挂在第二个 PIC 上：IRQ12 → PIC_2_OFFSET + 4
+    idt[PIC_2_OFFSET + 4].set_handler_fn(crate::mouse::mouse_handler);
 
     idt.load();
     *IDT_REF.lock() = Some(idt);

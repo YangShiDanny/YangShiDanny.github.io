@@ -96,25 +96,33 @@ pub struct Shell {
     history: Vec<String>,
     /// 历史浏览位置，`None` 表示正在编辑新行
     hist_pos: Option<usize>,
+    /// 退出标志：Esc 或 exit/logout/desktop 置位，让 run 返回到桌面
+    quit: bool,
 }
 
 impl Shell {
     pub fn new() -> Self {
-        Shell { line: Line::new(), history: Vec::new(), hist_pos: None }
+        Shell { line: Line::new(), history: Vec::new(), hist_pos: None, quit: false }
     }
 
-    /// 主循环，永不返回
-    pub fn run(&mut self) -> ! {
+    /// 主循环。正常时一直跑；Esc / exit / logout / desktop 会返回，交还桌面。
+    pub fn run(&mut self) {
         self.banner();
         loop {
             self.prompt();
             let line = self.read_line();
             let trimmed = line.trim().to_string();
             if trimmed.is_empty() {
+                if self.quit {
+                    return;
+                }
                 continue;
             }
             self.remember(&trimmed);
             self.dispatch(&trimmed);
+            if self.quit {
+                return;
+            }
         }
     }
 
@@ -262,6 +270,11 @@ impl Shell {
                     self.complete();
                     self.redraw(pl, pc);
                 }
+                // Esc：放弃当前行并交还桌面
+                Key::Esc => {
+                    self.quit = true;
+                    return String::new();
+                }
                 // Ctrl+L 清屏、Ctrl+C 弃行、Ctrl+U 清到行首 —— 三个顺手的老习惯
                 Key::Ctrl(b'l') => {
                     vga::clear();
@@ -398,6 +411,9 @@ impl Shell {
             }
             "reboot" => self.cmd_reboot(),
             "halt" => self.cmd_halt(),
+            "exit" | "logout" | "desktop" => {
+                self.quit = true;
+            }
             "crash" => crate::interrupts::trigger_breakpoint(),
             // 调试用：把显存前 n 个字符打到串口，确认 VGA 写入真的落到了 0xB8000
             "vga" => {

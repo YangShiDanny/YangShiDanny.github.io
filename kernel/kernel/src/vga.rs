@@ -85,6 +85,10 @@ struct Writer {
     cur_row: usize,
     cur_col: usize,
     cur_visible: bool,
+    /// viewport 左上角的像素坐标：Writer 的所有文字/填充都限制在它里面，
+    /// 这样同一个 Writer 就能被「装进」窗口客户区，而桌面在它周围画边框。
+    vx: usize,
+    vy: usize,
     cells: Vec<Cell>,
 }
 
@@ -114,6 +118,8 @@ impl Writer {
             cur_row: 0,
             cur_col: 0,
             cur_visible: false,
+            vx: 0,
+            vy: 0,
             cells: Vec::new(),
         }
     }
@@ -150,17 +156,22 @@ impl Writer {
         }
     }
 
-    /// 整屏填成某个颜色（用调色板索引）
+    /// 把 viewport 区域填成某个颜色（调色板索引）。viewport 之外不动 ——
+    /// 这样终端窗口 `clear` 时只会擦掉客户区，不会把窗口框外的桌面抹掉。
     fn fill_screen(&self, ci: u8) {
         let (r, g, b) = PALETTE[ci as usize];
         let w = self.info.width;
         let h = self.info.height;
         let stride = self.info.stride;
         let bpp = self.info.bytes_per_pixel.max(1);
+        let vx = self.vx;
+        let vy = self.vy;
+        let vw = (self.cols * self.cell_w).min(w.saturating_sub(vx));
+        let vh = (self.rows * self.cell_h).min(h.saturating_sub(vy));
         let p = self.fb_ptr as *mut u8;
-        for y in 0..h {
+        for y in vy..vy + vh {
             let row_off = y * stride * bpp;
-            for x in 0..w {
+            for x in vx..vx + vw {
                 let off = row_off + x * bpp;
                 if off + 2 >= self.fb_len {
                     continue;
@@ -188,8 +199,8 @@ impl Writer {
         if r >= self.rows || c >= self.cols {
             return;
         }
-        let x0 = c * self.cell_w;
-        let y0 = r * self.cell_h;
+        let x0 = self.vx + c * self.cell_w;
+        let y0 = self.vy + r * self.cell_h;
         let cell = self.cells[r * self.cols + c];
         let (fg_i, bg_i) = if invert {
             (cell.bg, cell.fg)
@@ -230,42 +241,46 @@ impl Writer {
         }
     }
 
-    /// 整体上移一行，最后一行清空 —— 传统终端的做法
+    /// 整体上移一行，最后一行清空 —— 传统终端的做法（只在 viewport 内）
     fn scroll(&mut self) {
         if self.rows == 0 {
             return;
         }
-        // 1) framebuffer 像素整体向上平移一个 cell_h（memmove，自动处理重叠）
-        if self.fb_len > 0 && self.cell_h > 0 {
-            let bpp = self.info.bytes_per_pixel.max(1);
-            let bytes_per_row = self.cell_h * self.info.stride * bpp;
-            let n = self.fb_len.saturating_sub(bytes_per_row);
-            if n > 0 {
-                let p = self.fb_ptr as *mut u8;
-                unsafe { core::ptr::copy(p.add(bytes_per_row), p, n) };
-                // 底部新空出的 band 填成当前背景色
-                let bg = PALETTE[self.bg as usize];
-                let top = (self.info.height).saturating_sub(self.cell_h);
-                for y in top..self.info.height {
-                    let row_off = y * self.info.stride * bpp;
-                    for x in 0..self.info.width {
-                        let off = row_off + x * bpp;
-                        if off + 2 >= self.fb_len {
-                            continue;
-                        }
-                        let pp = self.fb_ptr as *mut u8;
-                        unsafe {
-                            match self.info.pixel_format {
-                                PixelFormat::Bgr => {
-                                    *(pp.add(off)) = bg.2;
-                                    *(pp.add(off + 1)) = bg.1;
-                                    *(pp.add(off + 2)) = bg.0;
-                                }
-                                _ => {
-                                    *(pp.add(off)) = bg.0;
-                                    *(pp.add(off + 1)) = bg.1;
-                                    *(pp.add(off + 2)) = bg.2;
-                                }
+        let vx = self.vx;
+        let vy = self.vy;
+        let vw = (self.cols * self.cell_w).min(self.info.width.saturating_sub(vx));
+        let vh = (self.rows * self.cell_h).min(self.info.height.saturating_sub(vy));
+        let bpp = self.info.bytes_per_pixel.max(1);
+        let stride = self.info.stride;
+        let p = self.fb_ptr as *mut u8;
+        if vh > self.cell_h {
+            // 只搬 viewport 里的像素，不碰窗口框外的桌面像素
+            for y in 0..(vh - self.cell_h) {
+                let src_off = (vy + y + self.cell_h) * stride * bpp + vx * bpp;
+                let dst_off = (vy + y) * stride * bpp + vx * bpp;
+                unsafe { core::ptr::copy(p.add(src_off), p.add(dst_off), vw * bpp) };
+            }
+            // 底部新空出的 band 填成当前背景色
+            let bg = PALETTE[self.bg as usize];
+            let fill_from = vy + vh - self.cell_h;
+            for y in fill_from..vy + vh {
+                let row_off = y * stride * bpp;
+                for x in vx..vx + vw {
+                    let off = row_off + x * bpp;
+                    if off + 2 >= self.fb_len {
+                        continue;
+                    }
+                    unsafe {
+                        match self.info.pixel_format {
+                            PixelFormat::Bgr => {
+                                *(p.add(off)) = bg.2;
+                                *(p.add(off + 1)) = bg.1;
+                                *(p.add(off + 2)) = bg.0;
+                            }
+                            _ => {
+                                *(p.add(off)) = bg.0;
+                                *(p.add(off + 1)) = bg.1;
+                                *(p.add(off + 2)) = bg.2;
                             }
                         }
                     }
@@ -398,12 +413,9 @@ static WRITER: Mutex<Writer> = Mutex::new(Writer::new());
 ///
 /// 必须在 `memory::init` 之后调用（字符回填缓冲用到了堆）。
 pub fn init(framebuffer: FrameBuffer) {
-    // SAFETY: framebuffer 由 bootloader 映射，内核生命周期内一直有效
-    let (info, buf) = unsafe {
-        let info = framebuffer.info();
-        let buf = framebuffer.into_buffer();
-        (info, buf)
-    };
+    // framebuffer.info() 与 into_buffer() 在 bootloader_api 0.11 里都是安全方法
+    let info = framebuffer.info();
+    let buf = framebuffer.into_buffer();
     interrupts::without_interrupts(|| {
         let mut w = WRITER.lock();
         let sample =
@@ -423,6 +435,8 @@ pub fn init(framebuffer: FrameBuffer) {
         w.cell_h = cell_h;
         w.cols = cols;
         w.rows = rows;
+        w.vx = 0;
+        w.vy = 0;
         w.fg = LIGHT_GRAY;
         w.bg = BLACK;
         w.cells = vec![
@@ -558,5 +572,221 @@ pub fn boot_done() {
 pub fn panic_screen(info: &core::panic::PanicInfo) {
     interrupts::without_interrupts(|| {
         WRITER.lock().panic_inner(info);
+    });
+}
+
+/* ---------- 图形图元（绝对像素坐标，不受 viewport 影响） ---------- */
+
+/// 取 framebuffer 基址 / 长度 / 描述符。供下面的图元函数用。
+fn fb_raw() -> (usize, usize, FrameBufferInfo) {
+    let w = WRITER.lock();
+    (w.fb_ptr, w.fb_len, w.info)
+}
+
+/// 画一个像素（越界静默放弃）
+pub fn pixel(x: usize, y: usize, rgb: (u8, u8, u8)) {
+    let (ptr, len, info) = fb_raw();
+    let w = info.width;
+    let h = info.height;
+    if x >= w || y >= h {
+        return;
+    }
+    let bpp = info.bytes_per_pixel.max(1);
+    let off = (y * info.stride + x) * bpp;
+    if off + 2 >= len {
+        return;
+    }
+    let p = ptr as *mut u8;
+    unsafe {
+        match info.pixel_format {
+            PixelFormat::Bgr => {
+                *(p.add(off)) = rgb.2;
+                *(p.add(off + 1)) = rgb.1;
+                *(p.add(off + 2)) = rgb.0;
+            }
+            _ => {
+                *(p.add(off)) = rgb.0;
+                *(p.add(off + 1)) = rgb.1;
+                *(p.add(off + 2)) = rgb.2;
+            }
+        }
+    }
+}
+
+/// 实心矩形
+pub fn fill_rect(x: usize, y: usize, w: usize, h: usize, rgb: (u8, u8, u8)) {
+    let (ptr, len, info) = fb_raw();
+    let sw = info.width;
+    let sh = info.height;
+    let x1 = (x + w).min(sw);
+    let y1 = (y + h).min(sh);
+    let bpp = info.bytes_per_pixel.max(1);
+    let p = ptr as *mut u8;
+    for yy in y..y1 {
+        let row_off = yy * info.stride * bpp;
+        for xx in x..x1 {
+            let off = row_off + xx * bpp;
+            if off + 2 >= len {
+                continue;
+            }
+            unsafe {
+                match info.pixel_format {
+                    PixelFormat::Bgr => {
+                        *(p.add(off)) = rgb.2;
+                        *(p.add(off + 1)) = rgb.1;
+                        *(p.add(off + 2)) = rgb.0;
+                    }
+                    _ => {
+                        *(p.add(off)) = rgb.0;
+                        *(p.add(off + 1)) = rgb.1;
+                        *(p.add(off + 2)) = rgb.2;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 矩形边框（1px）
+pub fn stroke_rect(x: usize, y: usize, w: usize, h: usize, rgb: (u8, u8, u8)) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    fill_rect(x, y, w, 1, rgb);
+    fill_rect(x, y + h - 1, w, 1, rgb);
+    fill_rect(x, y, 1, h, rgb);
+    fill_rect(x + w - 1, y, 1, h, rgb);
+}
+
+/// 实心圆（光栅化）
+pub fn fill_circle(cx: usize, cy: usize, r: usize, rgb: (u8, u8, u8)) {
+    if r == 0 {
+        return;
+    }
+    let _ = fb_raw(); // 确保 framebuffer 已初始化（pixel() 内部会再取一次）
+    let rr = r as i64 * r as i64;
+    for yy in (cy as i64 - r as i64)..=(cy as i64 + r as i64) {
+        for xx in (cx as i64 - r as i64)..=(cx as i64 + r as i64) {
+            let dx = xx - cx as i64;
+            let dy = yy - cy as i64;
+            if dx * dx + dy * dy <= rr && xx >= 0 && yy >= 0 {
+                pixel(xx as usize, yy as usize, rgb);
+            }
+        }
+    }
+}
+
+/// 在像素坐标 (x, y) 处画一行等宽文字。
+/// `bg = None` 时透明（只画字形像素，可叠在图标上）；`Some` 时画实心底。
+pub fn text(x: usize, y: usize, s: &str, fg: (u8, u8, u8), bg: Option<(u8, u8, u8)>) {
+    let (_, _, info) = fb_raw();
+    if info.width == 0 {
+        return;
+    }
+    let mut cx = x;
+    for ch in s.chars() {
+        let ras = match get_raster(ch, FontWeight::Regular, RasterHeight::Size16) {
+            Some(r) => r,
+            None => match get_raster('?', FontWeight::Regular, RasterHeight::Size16) {
+                Some(r) => r,
+                None => return,
+            },
+        };
+        let gw = ras.width();
+        let gh = ras.height();
+        let rows = ras.raster();
+        for py in 0..gh {
+            for px in 0..gw {
+                let inten = rows[py][px] as u32;
+                if inten == 0 {
+                    if let Some(b) = bg {
+                        pixel(cx + px, y + py, b);
+                    }
+                } else if let Some(b) = bg {
+                    let r = (fg.0 as u32 * inten + b.0 as u32 * (255 - inten)) / 255;
+                    let g = (fg.1 as u32 * inten + b.1 as u32 * (255 - inten)) / 255;
+                    let b2 = (fg.2 as u32 * inten + b.2 as u32 * (255 - inten)) / 255;
+                    pixel(cx + px, y + py, (r as u8, g as u8, b2 as u8));
+                } else {
+                    pixel(cx + px, y + py, fg);
+                }
+            }
+        }
+        cx += gw + 1;
+        if cx >= info.width {
+            return;
+        }
+    }
+}
+
+pub fn screen_w() -> usize {
+    WRITER.lock().info.width
+}
+
+pub fn screen_h() -> usize {
+    WRITER.lock().info.height
+}
+
+/* ---------- viewport：把全局 Writer 装进窗口客户区 ---------- */
+
+/// 让之后的所有文字/清屏都限制在 (px, py, pw, ph) 这块像素矩形里。
+pub fn set_viewport(px: usize, py: usize, pw: usize, ph: usize) {
+    interrupts::without_interrupts(|| {
+        let mut w = WRITER.lock();
+        let cw = w.cell_w.max(1);
+        let ch = w.cell_h.max(1);
+        w.vx = px;
+        w.vy = py;
+        w.cols = pw / cw;
+        w.rows = ph / ch;
+        w.fg = LIGHT_GRAY;
+        w.bg = BLACK;
+        w.cells = vec![Cell {
+            ch: b' ',
+            fg: LIGHT_GRAY,
+            bg: BLACK,
+        };
+        w.cols * w.rows];
+        w.col = 0;
+        w.row = 0;
+        w.cur_row = 0;
+        w.cur_col = 0;
+        w.cur_visible = false;
+    });
+}
+
+/// 撤销 viewport，恢复整屏渲染（窗口关闭后调用）
+pub fn reset_viewport() {
+    interrupts::without_interrupts(|| {
+        let mut w = WRITER.lock();
+        let cw = w.cell_w.max(1);
+        let ch = w.cell_h.max(1);
+        w.vx = 0;
+        w.vy = 0;
+        w.cols = w.info.width / cw;
+        w.rows = w.info.height / ch;
+        w.cells = vec![Cell {
+            ch: b' ',
+            fg: LIGHT_GRAY,
+            bg: BLACK,
+        };
+        w.cols * w.rows];
+        w.col = 0;
+        w.row = 0;
+        w.cur_row = 0;
+        w.cur_col = 0;
+        w.cur_visible = false;
+    });
+}
+
+/// 把当前 viewport 的所有字符格重画一遍（桌面重绘后用来恢复窗口里的内容）
+pub fn repaint() {
+    interrupts::without_interrupts(|| {
+        let w = WRITER.lock();
+        for r in 0..w.rows {
+            for c in 0..w.cols {
+                w.draw_cell(r, c, r == w.cur_row && c == w.cur_col && w.cur_visible);
+            }
+        }
     });
 }

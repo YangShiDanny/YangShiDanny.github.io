@@ -12,7 +12,12 @@ const OUT = path.join(ROOT, 'target/probe');
 fs.mkdirSync(OUT, { recursive: true });
 
 const secs = Number(process.argv[2] || 10);
-const keys = process.argv[3] || '';
+// 把字面转义 \n / \t 还原成真正的回车 / Tab —— 这样 shell 里传 'help\nvga\n'
+// （单引号不会解释反斜杠）也能正确注入回车。
+const keys = (process.argv[3] || '').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+// 第 4 个参数：逗号分隔的「整键」qcode（如 esc / ret / tab），不经过逐字符映射，
+// 适合发 Escape 这种没有字面字符的键。
+const specials = (process.argv[4] || '').split(',').map(s => s.trim()).filter(Boolean);
 const sock = path.join(OUT, 'qmp.sock');
 const serialLog = path.join(OUT, 'serial.log');
 const shot = path.join(OUT, 'screen.ppm');
@@ -78,9 +83,52 @@ function send(s, obj) { s.write(JSON.stringify(obj) + '\r\n'); }
     const k = keyName(ch);
     if (!k) continue;
     send(s, { execute: 'send-key', arguments: { keys: [{ type: 'qcode', data: k }] } });
-    await new Promise(r => setTimeout(r, 90));
+    await new Promise(r => setTimeout(r, 250));
   }
   if (keys) await new Promise(r => setTimeout(r, 900));
+
+  // 注入整键（如 esc）：一个 qcode 一次 send-key
+  for (const sp of specials) {
+    send(s, { execute: 'send-key', arguments: { keys: [{ type: 'qcode', data: sp }] } });
+    await new Promise(r => setTimeout(r, 250));
+  }
+  if (specials.length) await new Promise(r => setTimeout(r, 900));
+
+  // 鼠标：第 5 个参数。
+  //   "X,Y"      —— 移到 (X,Y) 再点一下左键（点击）
+  //   "move:X,Y" —— 只移到 (X,Y)，不点击（用来隔离「移动」和「点击」哪个出问题）
+  // PS/2 鼠标只收「相对位移」并累加到驱动坐标；驱动坐标开机就被设在屏幕中心
+  // (640,360)，且每次 QEMU 都是全新启动，所以发相对位移 (X-640, Y-360) 就能
+  // 精确落到 (X,Y)。千万别发超大位移当「归零」——那会让 QEMU 吐出畸形包把渲染搞花。
+  const mouseArg = process.argv[5] || '';
+  const m = /^move:(\d+),(\d+)$/.exec(mouseArg) || /^(\d+),(\d+)$/.exec(mouseArg);
+  if (m) {
+    const cx = +m[1], cy = +m[2];
+    const MX = 640, MY = 360; // 屏幕中心 = 驱动鼠标初始位置（1280×720）
+    // 把整段位移拆成每步 ≤32px 的小步发送。PS/2 鼠标单包位移只有 9 位有符号
+    // （±255，常拆成 ≤127），一步发太大 QEMU 会拆成多包、还容易因符号位/时序丢包，
+    // 光标落点会偏。小步发送最稳。
+    const dx = cx - MX, dy = cy - MY;
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 32));
+    for (let i = 1; i <= steps; i++) {
+      send(s, { execute: 'input-send-event', arguments: { events: [
+        { type: 'rel', data: { axis: 'x', value: Math.round(dx * i / steps) - Math.round(dx * (i - 1) / steps) } },
+        { type: 'rel', data: { axis: 'y', value: Math.round(dy * i / steps) - Math.round(dy * (i - 1) / steps) } },
+      ] } });
+      await new Promise(r => setTimeout(r, 20));
+    }
+    await new Promise(r => setTimeout(r, 150));
+    if (!/^move:/.test(mouseArg)) {
+      send(s, { execute: 'input-send-event', arguments: { events: [
+        { type: 'btn', data: { down: true, button: 'left' } },
+      ] } });
+      await new Promise(r => setTimeout(r, 80));
+      send(s, { execute: 'input-send-event', arguments: { events: [
+        { type: 'btn', data: { down: false, button: 'left' } },
+      ] } });
+    }
+    await new Promise(r => setTimeout(r, 900));
+  }
 
   send(s, { execute: 'screendump', arguments: { filename: shot } });
   await new Promise(r => setTimeout(r, 1500));

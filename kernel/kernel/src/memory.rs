@@ -11,7 +11,6 @@
 //! 后续要上分页的话，`FRAMES` 这套位图可以直接接 `map_page`。
 
 use alloc::alloc::{GlobalAlloc, Layout};
-use alloc::format;
 use bootloader_api::info::MemoryRegionKind;
 use core::ptr::null_mut;
 use spin::Mutex;
