@@ -377,6 +377,14 @@ pub fn cursor_overlay() {
     draw_cursor(mx, my);
 }
 
+/// 整帧重绘后调用：旧保存块已过期（屏幕内容全变了，恢复反而画错），
+/// 直接丢弃，然后强制把光标画到当前位置。
+pub fn cursor_overlay_force() {
+    *OV_STATE.lock() = None;
+    OV_LAST_MOUSE.store(isize::MIN, Ordering::Relaxed);
+    cursor_overlay();
+}
+
 /// 离开文字环境前调用：恢复底下的像素
 pub fn cursor_overlay_clear() {
     OV_LAST_MOUSE.store(isize::MIN, Ordering::Relaxed);
@@ -523,8 +531,21 @@ fn draw_scene(open: OpenApp) {
             App::Terminal => {}
         }
     }
+    // 光标不在这里画：由 cursor_overlay 统一管理（全屏重绘后调
+    // cursor_overlay_force 强制补画，避免重绘间隙里的中间帧被看到）
+}
 
-    draw_cursor(mouse::x(), mouse::y());
+/// 只重画顶栏右侧的时钟。整帧重绘太重（清屏→星空→图标→Dock，
+/// framebuffer 直写没有 vsync，中间帧被显示器采到就是肉眼可见的闪烁），
+/// 稳态下每秒只需要动这一小块。
+fn redraw_clock() {
+    let sw = vga::screen_w();
+    let t = interrupts::uptime_ms() / 1000;
+    let clk = format!("{:02}:{:02}:{:02}", t / 3600, (t % 3600) / 60, t % 60);
+    let cw = clk.len() * 9 + 1;
+    // 擦除区不碰 y=25 的面板边线
+    vga::fill_rect(sw - cw - 18, 1, cw + 18, 24, PANEL);
+    vga::text(sw - cw - 14, 6, &clk, TEXT, Some(PANEL));
 }
 
 /// 打开终端：画窗框，把文字 viewport 指到客户区，跑 shell，回来时撤销 viewport
@@ -548,40 +569,43 @@ fn to_open(app: App) -> OpenApp {
 }
 
 /// 桌面主循环，永不返回
+///
+/// 重绘策略（防闪烁的关键）：
+///  - 开/关应用 → 整帧 draw_scene（低频，闪一次无感）
+///  - 时钟跳变  → 只重画顶栏右侧小块 redraw_clock
+///  - 鼠标移动  → cursor_overlay 的 11×11 像素块保存/恢复，不碰整屏
 pub fn run() -> ! {
     let mut open = OpenApp::None;
-    let mut last_x = -1i32;
-    let mut last_y = -1i32;
-    let mut last_sec = !0u64;
     let mut last_open = open;
+    let mut last_sec = !0u64;
+    let mut need_full = true; // 开机第一帧必须整帧画，否则屏幕是空的
     loop {
         // Terminal 是阻塞式的：单独拎出来跑，跑完交还桌面
         if let OpenApp::Terminal = open {
             launch_terminal();
             open = OpenApp::None;
-            last_x = -1;
-            last_y = -1;
-            last_sec = !0;
             last_open = open;
+            last_sec = !0;
+            need_full = true;
             continue;
         }
 
-        let mx = mouse::x();
-        let my = mouse::y();
         let sec = interrupts::uptime_secs();
-        // 重绘条件：鼠标动了、秒数变了、或者「打开/关闭应用」的状态变了。
-        // 最后这条很关键 —— 用键盘/鼠标开应用后，若不立刻重绘，窗口要等下一个
-        // 时钟跳变（最多 1 秒）才冒出来，看着像没反应。
-        if open != last_open || mx != last_x || my != last_y || sec != last_sec {
+        if need_full || open != last_open {
             draw_scene(open);
-            last_x = mx;
-            last_y = my;
-            last_sec = sec;
+            cursor_overlay_force();
+            need_full = false;
             last_open = open;
+            last_sec = sec;
+        } else if sec != last_sec {
+            redraw_clock();
+            last_sec = sec;
         }
 
         // 鼠标点击：命中检测
         if mouse::take_click() {
+            let mx = mouse::x();
+            let my = mouse::y();
             if let OpenApp::App(_) = open {
                 let r = window_rect();
                 if close_rect(r).contains(mx, my) {
@@ -613,6 +637,9 @@ pub fn run() -> ! {
                 _ => {}
             }
         }
+
+        // 鼠标移动：增量画光标（内部判断没动就直接返回）
+        cursor_overlay();
 
         x86_64::instructions::hlt();
     }
